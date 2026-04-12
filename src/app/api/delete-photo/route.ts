@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { createRateLimiter } from "@/shared/lib/rate-limit";
+import { checkCsrf } from "@/shared/lib/csrf";
 
 const BUCKET = "package-photos";
+const limiter = createRateLimiter({ windowMs: 60_000, max: 20 });
 
 /**
  * Delete a photo from Supabase Storage.
@@ -11,6 +14,11 @@ const BUCKET = "package-photos";
  * public_id is the storage path used in Supabase Storage.
  */
 export async function POST(req: NextRequest) {
+  const csrf = checkCsrf(req);
+  if (csrf) return csrf;
+  const limited = limiter.check(req);
+  if (limited) return limited;
+
   try {
     /* ── 1. Authenticate ── */
     const supabase = createServerClient(

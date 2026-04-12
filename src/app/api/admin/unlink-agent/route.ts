@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { createRateLimiter } from "@/shared/lib/rate-limit";
+import { checkCsrf } from "@/shared/lib/csrf";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 20 });
 
 /**
  * Unlinks a child agent from its parent by calling the unlink_agent RPC.
  * Uses SECURITY DEFINER function to bypass all RLS/PostgREST restrictions.
  */
 export async function POST(req: NextRequest) {
+  const csrf = checkCsrf(req);
+  if (csrf) return csrf;
+  const limited = limiter.check(req);
+  if (limited) return limited;
+
   try {
     // 1. Authenticate caller
     const supabase = createServerClient(

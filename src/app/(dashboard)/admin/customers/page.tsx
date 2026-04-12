@@ -218,7 +218,7 @@ export default function CustomersPage() {
       }
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
-      const { data: agentsData, error: agentsError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      const { data: agentsData, error: agentsError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentsError) {
         console.error("agents query:", agentsError.message);
       }

@@ -142,7 +142,7 @@ export default function UserSettings() {
         const { data: usersData } = await supabase.from("users").select("*").neq("role", "customer").is("deleted_at", null);
         if (usersData) setUsers(usersData);
 
-        const { data: agentsData } = await supabase.from("agents").select("*").eq("status", "active").order("name");
+        const { data: agentsData } = await supabase.from("agents").select("*").eq("status", "active").is("deleted_at", null).order("name");
         if (agentsData) setAgents(agentsData);
 
         const { data: edgesData } = await supabase.from("agent_edges").select("*");

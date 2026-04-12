@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { createRateLimiter } from "@/shared/lib/rate-limit";
+import { checkCsrf } from "@/shared/lib/csrf";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
 
 const ALLOWED_TABLES = ["awbs", "users", "packages", "invoices", "invoice_lines", "courier_groups", "agent_edges"];
 
@@ -29,6 +33,11 @@ const CASCADE_MAP: Record<
  * - Uses service role key to bypass RLS for the actual delete
  */
 export async function POST(req: NextRequest) {
+  const csrf = checkCsrf(req);
+  if (csrf) return csrf;
+  const limited = limiter.check(req);
+  if (limited) return limited;
+
   try {
     /* ── 1. Authenticate the caller via their session cookie ── */
     const supabase = createServerClient(

@@ -171,7 +171,7 @@ export default function AgentSettings() {
     try {
       setLoading(true);
       const [agentsRes, edgesRes, usersRes] = await Promise.all([
-        supabase.from("agents").select("*").eq("status", "active").order("name"),
+        supabase.from("agents").select("*").eq("status", "active").is("deleted_at", null).order("name"),
         supabase.from("agent_edges").select("*"),
         supabase.from("users").select("*").neq("role", "customer"),
       ]);
@@ -439,7 +439,7 @@ export default function AgentSettings() {
       if (error) {
         showError("Failed to save agent info");
       } else {
-        const { data: agentsData } = await supabase.from("agents").select("*").eq("status", "active").order("name");
+        const { data: agentsData } = await supabase.from("agents").select("*").eq("status", "active").is("deleted_at", null).order("name");
         if (agentsData) setAgents(agentsData);
         showSuccess("Agent info saved");
       }

@@ -181,6 +181,18 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [supabase]);
 
+  // Re-fetch auth data when tab becomes visible (AU-10)
+  // Catches permission changes during long idle sessions
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadAuthData();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [loadAuthData]);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
     setAuthUser(null);

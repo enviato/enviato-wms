@@ -240,7 +240,7 @@ export default function AwbsPage() {
       }
       if (grpData) setCourierGroups(grpData as { id: string; name: string; code: string; logo_url?: string | null }[]);
 
-      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentError) {
         console.error("agents query:", agentError.message);
       }

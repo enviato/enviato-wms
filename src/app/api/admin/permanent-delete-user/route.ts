@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { createRateLimiter } from "@/shared/lib/rate-limit";
+import { checkCsrf } from "@/shared/lib/csrf";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 10 });
 
 /**
  * Permanently delete a user: removes the user row AND their auth account.
@@ -8,6 +12,11 @@ import { createAdminClient } from "@/lib/supabase-admin";
  * FK constraints with ON DELETE SET NULL will automatically clear package references.
  */
 export async function POST(req: NextRequest) {
+  const csrf = checkCsrf(req);
+  if (csrf) return csrf;
+  const limited = limiter.check(req);
+  if (limited) return limited;
+
   try {
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

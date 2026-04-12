@@ -171,7 +171,7 @@ export default function CustomerDetailsPage({
     async function loadData() {
       try {
         // Load agents first (needed for enrichment)
-        const { data: agentsData } = await supabase.from("agents").select("id, name, company_name").eq("status", "active").order("name");
+        const { data: agentsData } = await supabase.from("agents").select("id, name, company_name").eq("status", "active").is("deleted_at", null).order("name");
         if (agentsData) setAgentsList(agentsData as AgentItem[]);
 
         // Load customer — avoid agent join (FK may not exist in DB)

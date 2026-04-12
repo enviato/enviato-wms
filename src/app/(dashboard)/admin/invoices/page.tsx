@@ -287,7 +287,7 @@ export default function InvoicesPage() {
       const { data: grpData } = await supabase.from("courier_groups").select("id, code, name").is("deleted_at", null);
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
-      const { data: agentData } = await supabase.from("agents").select("id, name, company_name, agent_code, email, phone, address_line1, address_line2, city, state, country, zip_code").eq("status", "active").order("name");
+      const { data: agentData } = await supabase.from("agents").select("id, name, company_name, agent_code, email, phone, address_line1, address_line2, city, state, country, zip_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentData) setBillingAgents(agentData as BillingAgent[]);
 
       setLoading(false);

@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { createRateLimiter } from "@/shared/lib/rate-limit";
+import { checkCsrf } from "@/shared/lib/csrf";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 20 });
 
 const BUCKET = "package-photos";
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+]);
+const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "heif"]);
 
 /**
  * Upload a package photo to Supabase Storage.
@@ -13,6 +25,11 @@ const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
  * - Returns { url, public_id } matching the storage_url / storage_path columns
  */
 export async function POST(req: NextRequest) {
+  const csrf = checkCsrf(req);
+  if (csrf) return csrf;
+  const limited = limiter.check(req);
+  if (limited) return limited;
+
   try {
     /* ── 1. Authenticate ── */
     const supabase = createServerClient(
@@ -70,6 +87,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Strict MIME type validation (AU-14)
+    const mimeType = file.type?.toLowerCase() || "";
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      return NextResponse.json(
+        { error: `Invalid file type: ${mimeType || "unknown"}. Allowed: JPEG, PNG, WebP, HEIC.` },
+        { status: 400 }
+      );
+    }
+
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return NextResponse.json(
+        { error: `Invalid file extension: .${ext}. Allowed: .jpg, .jpeg, .png, .webp, .heic, .heif` },
+        { status: 400 }
+      );
+    }
+
     const admin = createAdminClient();
 
     /* ── 4. Ensure bucket exists ── */
@@ -78,13 +113,13 @@ export async function POST(req: NextRequest) {
       await admin.storage.createBucket(BUCKET, {
         public: true,
         fileSizeLimit: MAX_SIZE,
-        allowedMimeTypes: ["image/*"],
+        allowedMimeTypes: Array.from(ALLOWED_MIME_TYPES),
       });
     }
 
     /* ── 5. Upload ── */
-    const ext = file.name.split(".").pop() || "jpg";
-    const storagePath = `${crypto.randomUUID()}.${ext}`;
+    const safeExt = ext || "jpg";
+    const storagePath = `${crypto.randomUUID()}.${safeExt}`;
 
     const arrayBuffer = await file.arrayBuffer();
     const { error: uploadError } = await admin.storage

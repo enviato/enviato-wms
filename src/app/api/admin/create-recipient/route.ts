@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
+import { createRateLimiter } from "@/shared/lib/rate-limit";
+import { checkCsrf } from "@/shared/lib/csrf";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
 
 /**
  * Server-side route to create a recipient (customer) user.
@@ -13,6 +17,10 @@ import { createAdminClient } from "@/lib/supabase-admin";
  * the public.users row was deleted, it reuses the auth id.
  */
 export async function POST(req: NextRequest) {
+  const csrf = checkCsrf(req);
+  if (csrf) return csrf;
+  const limited = limiter.check(req);
+  if (limited) return limited;
   try {
     /* ── 1. Authenticate the caller ── */
     const supabase = createServerClient(

@@ -269,7 +269,7 @@ export default function PackagesPage() {
       if (grpError) console.error("courier_groups query:", grpError.message);
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
-      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentError) console.error("agents query:", agentError.message);
       if (agentData) setAgentsList(agentData as AgentItem[]);
 
