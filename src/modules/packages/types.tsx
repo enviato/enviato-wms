@@ -26,7 +26,7 @@ export type PackageDetail = {
   customer_id: string;
   courier_group_id: string | null;
   awb_id: string | null;
-  customer?: { id: string; first_name: string; last_name: string; email: string; customer_number?: string } | null;
+  customer?: { id: string; first_name: string; last_name: string; email: string; customer_number?: string; agent?: { id: string; name: string; agent_code?: string | null; company_name?: string | null } | null } | null;
   courier_group?: { code: string; name: string } | null;
   awb?: { id: string; awb_number: string; status: string } | null;
   photos?: PhotoRecord[];
