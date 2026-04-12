@@ -67,7 +67,7 @@ export default function LoginPage() {
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
             >
-              {/* Capri triangle (top-right) */}
+              {/* Blue triangle (top-right) */}
               <path
                 d="M 32 8 L 56 40 L 40 40 Z"
                 fill="#00bbf9"

@@ -1,7 +1,7 @@
 # ENVIATO WMS V2 — Go-Live Readiness Assessment
 
 **Updated:** April 12, 2026
-**Status:** GO-LIVE READY — All P0 blockers resolved. All P1 critical items resolved. All P2 security hardening complete. 66 of 76 items done, 10 remaining (non-critical P2 UX + P3 nice-to-haves).
+**Status:** GO-LIVE READY — All P0/P3 complete. All P1 complete (except AU-6 incremental logger migration). All P2 security hardening complete. 71 of 76 items done, 5 remaining (non-blocking UX improvements: stat validation, chart library, invoice modal, pagination, logger migration).
 
 ---
 
@@ -144,10 +144,10 @@ Full codebase audit performed. Findings organized by severity below. Deployment 
 
 | # | Page | Issue | Details |
 |---|------|-------|---------|
-| G-4 | Global | Old capri color refs in unused components | TopNav.tsx, login page SVGs |
-| AU-15 | Global | **No security headers in next.config.js** | Missing Content-Security-Policy, X-Frame-Options, etc. |
-| AU-16 | Global | **No skeleton loading states on data pages** | Pages show spinners instead of skeleton loaders — poor UX on slow networks |
-| AU-17 | Config | **Hardcoded Supabase URL in next.config.js** | `ilguqphtephoqlshgpza.supabase.co` in image remotePatterns should derive from env var |
+| ~~G-4~~ | ~~Global~~ | ~~Old capri color refs in unused components~~ | ✅ Fixed — Removed unused `--color-brand-capri` CSS variable. Updated "Capri" comment in login SVG. TopNav.tsx already removed in prior phase. |
+| ~~AU-15~~ | ~~Global~~ | ~~No security headers in next.config.js~~ | ✅ Fixed — Added X-Frame-Options (DENY), X-Content-Type-Options (nosniff), Referrer-Policy, Permissions-Policy, HSTS (2-year max-age + preload), X-DNS-Prefetch-Control via `headers()` in next.config.js. |
+| ~~AU-16~~ | ~~Global~~ | ~~No skeleton loading states on data pages~~ | ✅ Already done — All 6 data pages (packages, AWBs, invoices, customers, analytics, dashboard) have `skeleton-pulse` loading states in table rows, stat cards, and ranking lists. |
+| ~~AU-17~~ | ~~Config~~ | ~~Hardcoded Supabase URL in next.config.js~~ | ✅ Fixed — `images.remotePatterns` now derives hostname from `NEXT_PUBLIC_SUPABASE_URL` env var via `new URL().hostname`. Falls back to empty array if env is missing. |
 
 ### POSITIVE AUDIT FINDINGS
 
@@ -245,10 +245,10 @@ CREATE TABLE IF NOT EXISTS org_settings (
 | Priority | Total | Completed | Remaining |
 |----------|-------|-----------|-----------|
 | P0 Blockers | 11 | **11** | **0** ✅ |
-| P1 Critical | 39 | **36** | **3** |
-| P2 Important | 22 | **10** | **12** |
-| P3 Nice-to-have | 4 | 0 | **4** |
-| **TOTAL** | **76** | **57** | **19** |
+| P1 Critical | 39 | **38** | **1** (AU-6 incremental logger migration) |
+| P2 Important | 22 | **18** | **4** (D-4, A-3, I-3, SC-9 — non-blocking UX) |
+| P3 Nice-to-have | 4 | **4** | **0** ✅ |
+| **TOTAL** | **76** | **71** | **5** |
 
 **Remaining P0 (0):** All P0 blockers resolved. ✅
 **Remaining P1 (5):** MT-3 (server-side permissions), AU-4 (error boundaries), AU-5 (silent query errors), AU-6 (console statements → error service), AU-7 (any types).
