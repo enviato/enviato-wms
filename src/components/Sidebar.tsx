@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/lib/supabase";
 import {
   Home,
@@ -63,16 +63,49 @@ interface SidebarProps {
   onToggleCollapse: (collapsed: boolean) => void;
 }
 
-export default function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
+/** Settings tab list — uses useSearchParams so must be wrapped in <Suspense> */
+function SettingsTabList({ onCloseMobile }: { onCloseMobile: () => void }) {
   const pathname = usePathname();
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
-
-  const isSettingsPage = pathname === "/admin/settings" || pathname.startsWith("/admin/settings/");
   const activeSettingsTab = pathname.startsWith("/admin/settings/")
     ? pathname.replace("/admin/settings/", "").split("/")[0]
     : searchParams.get("tab") || "general";
+
+  return (
+    <>
+      {SETTINGS_TABS.map((tab) => {
+        const Icon = tab.icon;
+        const active = activeSettingsTab === tab.id;
+        return (
+          <Link
+            key={tab.id}
+            href={`/admin/settings/${tab.id}`}
+            onClick={onCloseMobile}
+            className={`flex items-center gap-3 px-3 py-2 text-ui rounded transition-colors ${
+              active
+                ? "bg-primary/10 text-primary font-semibold"
+                : "text-slate-600 hover:bg-slate-100 font-medium"
+            }`}
+          >
+            <Icon
+              size={18}
+              strokeWidth={1.75}
+              className={`shrink-0 ${active ? "text-primary" : "text-slate-400"}`}
+            />
+            <span>{tab.label}</span>
+          </Link>
+        );
+      })}
+    </>
+  );
+}
+
+export default function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const supabase = createClient();
+
+  const isSettingsPage = pathname === "/admin/settings" || pathname.startsWith("/admin/settings/");
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userName, setUserName] = useState("");
@@ -305,32 +338,16 @@ export default function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-2 space-y-1">
           {isSettingsPage ? (
-            /* Settings navigation tabs */
-            <>
-              {SETTINGS_TABS.map((tab) => {
-                const Icon = tab.icon;
-                const active = activeSettingsTab === tab.id;
-                return (
-                  <Link
-                    key={tab.id}
-                    href={`/admin/settings/${tab.id}`}
-                    onClick={closeMobile}
-                    className={`flex items-center gap-3 px-3 py-2 text-ui rounded transition-colors ${
-                      active
-                        ? "bg-primary/10 text-primary font-semibold"
-                        : "text-slate-600 hover:bg-slate-100 font-medium"
-                    }`}
-                  >
-                    <Icon
-                      size={18}
-                      strokeWidth={1.75}
-                      className={`shrink-0 ${active ? "text-primary" : "text-slate-400"}`}
-                    />
-                    <span>{tab.label}</span>
-                  </Link>
-                );
-              })}
-            </>
+            /* Settings navigation tabs — Suspense-wrapped because SettingsTabList reads useSearchParams */
+            <Suspense fallback={
+              <div className="space-y-1">
+                {SETTINGS_TABS.map((tab) => (
+                  <div key={tab.id} className="h-9 bg-slate-100 rounded animate-pulse" />
+                ))}
+              </div>
+            }>
+              <SettingsTabList onCloseMobile={closeMobile} />
+            </Suspense>
           ) : (
             /* Normal navigation */
             <>
