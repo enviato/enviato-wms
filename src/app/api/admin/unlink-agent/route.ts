@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     // 2. Check caller is org_admin or warehouse_staff
     const { data: profile } = await supabase
       .from("users")
-      .select("role_v2")
+      .select("role_v2, org_id")
       .eq("id", user.id)
       .single();
 
@@ -52,8 +52,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Call RPC function (SECURITY DEFINER, bypasses RLS entirely)
+    // 4. Verify both agents belong to caller's org before bypassing RLS
     const admin = createAdminClient();
+
+    const { data: agents } = await admin
+      .from("agents")
+      .select("id, org_id")
+      .in("id", [parent_agent_id, child_agent_id]);
+
+    const allOwnedByCaller = agents?.length === 2 &&
+      agents.every((a: { org_id: string }) => a.org_id === profile.org_id);
+
+    if (!allOwnedByCaller) {
+      return NextResponse.json(
+        { error: "Forbidden — agents do not belong to your organization" },
+        { status: 403 }
+      );
+    }
+
+    // 5. Call RPC function (SECURITY DEFINER, bypasses RLS entirely)
     const { error } = await admin.rpc("unlink_agent", {
       p_parent_id: parent_agent_id,
       p_child_id: child_agent_id,

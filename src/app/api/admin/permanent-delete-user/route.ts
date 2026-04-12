@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from("users")
-      .select("role_v2")
+      .select("role_v2, org_id")
       .eq("id", user.id)
       .single();
 
@@ -49,6 +49,27 @@ export async function POST(req: NextRequest) {
     }
 
     const admin = createAdminClient();
+
+    // Verify target user belongs to caller's org before permanent deletion
+    const { data: targetUser } = await admin
+      .from("users")
+      .select("org_id, deleted_at")
+      .eq("id", userId)
+      .single();
+
+    if (!targetUser || targetUser.org_id !== profile.org_id) {
+      return NextResponse.json(
+        { error: "Forbidden — user does not belong to your organization" },
+        { status: 403 }
+      );
+    }
+
+    if (!targetUser.deleted_at) {
+      return NextResponse.json(
+        { error: "User must be soft-deleted (in trash) before permanent deletion" },
+        { status: 400 }
+      );
+    }
 
     // 1. Hard-delete the user row (FK ON DELETE SET NULL clears package references)
     const { error: deleteError } = await admin

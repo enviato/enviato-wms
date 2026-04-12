@@ -3,8 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 
 /**
- * Restore a soft-deleted user: unban their auth account so they can log in again.
- * The `deleted_at` / `deleted_by` columns are cleared by the client before calling this.
+ * Restore a soft-deleted user: clear deleted_at/deleted_by and unban their auth account.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -31,7 +30,7 @@ export async function POST(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from("users")
-      .select("role_v2")
+      .select("role_v2, org_id")
       .eq("id", user.id)
       .single();
 
@@ -48,6 +47,31 @@ export async function POST(req: NextRequest) {
     }
 
     const admin = createAdminClient();
+
+    // Verify target user belongs to caller's org
+    const { data: targetUser } = await admin
+      .from("users")
+      .select("org_id, deleted_at")
+      .eq("id", userId)
+      .single();
+
+    if (!targetUser || targetUser.org_id !== profile.org_id) {
+      return NextResponse.json(
+        { error: "Forbidden — user does not belong to your organization" },
+        { status: 403 }
+      );
+    }
+
+    // Clear soft-delete flags server-side (don't rely on client)
+    const { error: restoreError } = await admin
+      .from("users")
+      .update({ deleted_at: null, deleted_by: null })
+      .eq("id", userId);
+
+    if (restoreError) {
+      console.error("Failed to restore user row:", restoreError);
+      return NextResponse.json({ error: restoreError.message }, { status: 500 });
+    }
 
     // Unban the auth user so they can log in again
     const { error } = await admin.auth.admin.updateUserById(userId, {

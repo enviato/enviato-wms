@@ -44,14 +44,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    /* ── 2. Check caller is ORG_ADMIN or warehouse_staff ── */
+    /* ── 2. Check caller is ORG_ADMIN or WAREHOUSE_STAFF ── */
     const { data: profile } = await supabase
       .from("users")
-      .select("role, org_id")
+      .select("role_v2, org_id")
       .eq("id", user.id)
       .single();
 
-    if (!profile || (profile.role !== "org_admin" && profile.role !== "warehouse_staff")) {
+    if (!profile || !["ORG_ADMIN", "WAREHOUSE_STAFF"].includes(profile.role_v2 || "")) {
       return NextResponse.json(
         { error: "Forbidden — only admins can create recipients" },
         { status: 403 }

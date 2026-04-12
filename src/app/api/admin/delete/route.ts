@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     /* ── 2. Check that the user is ORG_ADMIN ── */
     const { data: profile } = await supabase
       .from("users")
-      .select("role_v2")
+      .select("role_v2, org_id")
       .eq("id", user.id)
       .single();
 
@@ -73,6 +73,8 @@ export async function POST(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    const callerOrgId = profile.org_id;
 
     /* ── 3. Parse request ── */
     const { table, ids } = (await req.json()) as {
@@ -94,8 +96,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    /* ── 4. Perform deletes with admin client (bypasses RLS) ── */
+    /* ── 4. Verify all target records belong to caller's org ── */
     const admin = createAdminClient();
+
+    // Tables without org_id (agent_edges, invoice_lines) are child records
+    // handled via CASCADE_MAP; their parents are already org-scoped.
+    const ORG_SCOPED_TABLES = ["awbs", "users", "packages", "invoices", "courier_groups"];
+    if (ORG_SCOPED_TABLES.includes(table)) {
+      const { data: records, error: fetchError } = await admin
+        .from(table)
+        .select("id, org_id")
+        .in("id", ids);
+
+      if (fetchError) {
+        return NextResponse.json({ error: "Failed to verify record ownership" }, { status: 500 });
+      }
+
+      const foreignRecords = (records || []).filter((r: { org_id: string }) => r.org_id !== callerOrgId);
+      if (foreignRecords.length > 0) {
+        return NextResponse.json(
+          { error: "Forbidden — one or more records do not belong to your organization" },
+          { status: 403 }
+        );
+      }
+    }
+
+    /* ── 5. Perform deletes with admin client (bypasses RLS) ── */
 
     /* Handle child records first to avoid FK constraint violations */
     const cascades = CASCADE_MAP[table];

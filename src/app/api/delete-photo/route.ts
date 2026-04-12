@@ -63,6 +63,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate path — prevent directory traversal attacks
+    if (public_id.includes("..") || public_id.includes("/")) {
+      return NextResponse.json(
+        { error: "Invalid storage path" },
+        { status: 400 }
+      );
+    }
+
     /* ── 4. Delete from storage ── */
     const admin = createAdminClient();
 
