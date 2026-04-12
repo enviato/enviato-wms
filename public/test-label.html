@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Label Print Test</title>
+<script src="https://unpkg.com/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.11/html-to-image.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #f3f4f6; padding: 40px; }
+  h2 { margin-bottom: 12px; }
+  .row { display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .col h3 { margin: 0; font-size: 14px; color: #666; }
+  button { padding: 10px 20px; border: none; background: #3c83f6; color: white; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button:hover { background: #2563eb; }
+  button.secondary { background: white; color: #333; border: 1px solid #d1d5db; }
+  #pdf-result { margin-top: 20px; }
+  #pdf-result img { border: 2px solid #111; background: white; }
+</style>
+</head>
+<body>
+
+<h2>Label Print Debug Tool</h2>
+<p>This tests the exact same flow: HTML label → html-to-image capture → jsPDF PDF → print</p>
+
+<div class="row">
+  <div class="col">
+    <h3>1. HTML Preview (what you see in the modal)</h3>
+    <div id="label-capture-target" style="width:380px; height:570px; border:2px solid #111; overflow:hidden; background:white; box-shadow:0 4px 12px rgba(0,0,0,0.15); display:flex; flex-direction:column;">
+      <!-- Header -->
+      <div style="padding:13px 18px;border-bottom:2px solid #111;background:#f0f0f0;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#111;">ENVIATO</span>
+      </div>
+      <!-- Barcode -->
+      <div style="text-align:center;padding:13px 18px;border-bottom:2px solid #111;">
+        <svg id="barcode"></svg>
+      </div>
+      <!-- Ship To -->
+      <div style="padding:13px 18px;border-bottom:1px solid #ccc;">
+        <div style="font-size:13px;text-transform:uppercase;letter-spacing:1.5px;color:#777;font-weight:700;margin-bottom:4px;">Ship To</div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
+          <span style="font-size:25px;font-weight:700;color:#111;line-height:1.2;">John Doe</span>
+          <span style="font-size:17px;font-weight:700;color:#111;font-family:monospace;letter-spacing:0.5px;white-space:nowrap;">ENV-00042</span>
+        </div>
+      </div>
+      <!-- Agent -->
+      <div style="padding:10px 18px;border-bottom:1px solid #ccc;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:17px;font-weight:700;text-transform:uppercase;color:#111;letter-spacing:0.5px;">ENVIATO Miami</div>
+        <div style="font-size:13px;color:#555;text-align:right;line-height:1.5;">+1 (305) 555-0100<br/>ops@enviato.com</div>
+      </div>
+      <!-- Weight + Dims -->
+      <div style="padding:10px 18px;border-bottom:1px solid #ccc;display:flex;gap:30px;">
+        <div>
+          <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#777;font-weight:700;margin-bottom:3px;">Billable Weight</div>
+          <div style="font-size:19px;font-weight:700;color:#111;">2.5 lbs</div>
+        </div>
+        <div>
+          <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#777;font-weight:700;margin-bottom:3px;">Dimensions</div>
+          <div style="font-size:19px;font-weight:700;color:#111;">12 × 8 × 6 in</div>
+        </div>
+      </div>
+      <!-- Commodity -->
+      <div style="padding:10px 18px;border-bottom:1px solid #ccc;">
+        <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#777;font-weight:700;margin-bottom:3px;">Commodity</div>
+        <div style="font-size:18px;font-weight:600;color:#111;">Electronics</div>
+      </div>
+      <!-- Tracking (pushed to bottom) -->
+      <div style="margin-top:auto;padding:10px 18px;border-top:1px solid #ccc;text-align:center;background:#f8f8f8;">
+        <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#777;font-weight:700;margin-bottom:3px;">Tracking Number</div>
+        <div style="font-family:monospace;font-size:17px;font-weight:600;color:#111;letter-spacing:0.5px;">1Z999AA10123456784</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3>2. Captured PNG (what html-to-image produces)</h3>
+    <div id="captured-image"></div>
+    <button onclick="captureLabel()">Capture as PNG</button>
+  </div>
+
+  <div class="col">
+    <h3>3. PDF Output (what gets sent to printer)</h3>
+    <div id="pdf-result"></div>
+    <button onclick="capturePdfAndShow()">Generate PDF</button>
+    <button class="secondary" onclick="capturePdfAndPrint()">Print via iframe</button>
+    <button class="secondary" onclick="capturePdfAndDownload()">Download PDF</button>
+  </div>
+</div>
+
+<script>
+  // Generate barcode
+  JsBarcode("#barcode", "PKG-001234", {
+    format: "CODE128", width: 2, height: 55,
+    displayValue: true, fontSize: 13, font: "monospace",
+    margin: 6, background: "#ffffff", textMargin: 3,
+  });
+
+  async function captureLabel() {
+    const el = document.getElementById('label-capture-target');
+    const dataUrl = await htmlToImage.toPng(el, { pixelRatio: 3, backgroundColor: '#ffffff', cacheBust: true });
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.style.width = '380px';
+    img.style.border = '2px solid #111';
+    document.getElementById('captured-image').innerHTML = '';
+    document.getElementById('captured-image').appendChild(img);
+  }
+
+  async function capturePdf() {
+    const el = document.getElementById('label-capture-target');
+    const dataUrl = await htmlToImage.toPng(el, { pixelRatio: 3, backgroundColor: '#ffffff', cacheBust: true });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'in', format: [4, 6] });
+    pdf.addImage(dataUrl, 'PNG', 0, 0, 4, 6);
+    return pdf;
+  }
+
+  async function capturePdfAndShow() {
+    const pdf = await capturePdf();
+    const blob = pdf.output('blob');
+    const url = URL.createObjectURL(blob);
+    document.getElementById('pdf-result').innerHTML =
+      '<iframe src="' + url + '" style="width:400px;height:600px;border:2px solid #111;"></iframe>';
+  }
+
+  async function capturePdfAndDownload() {
+    const pdf = await capturePdf();
+    pdf.save('test-label.pdf');
+  }
+
+  async function capturePdfAndPrint() {
+    const pdf = await capturePdf();
+    const blob = pdf.output('blob');
+    const url = URL.createObjectURL(blob);
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '-9999px';
+    iframe.style.bottom = '-9999px';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.border = 'none';
+    iframe.style.opacity = '0';
+    iframe.onload = () => {
+      setTimeout(() => {
+        try { iframe.contentWindow.focus(); iframe.contentWindow.print(); }
+        catch(e) { window.open(url, '_blank'); }
+        setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(url); }, 5000);
+      }, 300);
+    };
+    document.body.appendChild(iframe);
+    iframe.src = url;
+  }
+</script>
+</body>
+</html>
