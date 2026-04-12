@@ -1,15 +1,15 @@
 # ENVIATO WMS V2 — Architecture Document
 
-**Last Updated:** April 4, 2026
+**Last Updated:** April 12, 2026
 **Stack:** Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS + Supabase PostgreSQL
 
 ---
 
-## MODULARIZATION (Phase 7 — In Progress)
+## MODULARIZATION (Phase 7 — Complete)
 
 > **Full roadmap:** See `MODULARIZATION.md` for the complete strategy, directory structure, module definitions, and progress tracker.
 
-The codebase is being rewritten from a monolithic page-level architecture into a modular structure. The current state has ~19,700 lines concentrated in a few massive files (settings: 5,003 LOC, package detail: 2,388 LOC, packages list: 2,055 LOC), with minimal shared infrastructure (8 components, 1 hook, no contexts, no caching).
+The codebase has been rewritten from a monolithic page-level architecture into a modular structure. The original state had ~19,700 lines concentrated in a few massive files (settings: 5,003 LOC, package detail: 2,388 LOC, packages list: 2,055 LOC), with minimal shared infrastructure (8 components, 1 hook, no contexts, no caching).
 
 ### Target Architecture
 
@@ -309,3 +309,36 @@ All admin pages import: `Search`, `Bell`, `SlidersHorizontal`, `Plus`, `X`, `Che
 17. **Unified toggle styling pattern.** Use `bg-gray-300` (off) / `bg-primary` (on) with inline `transform: translateX()` for the knob. Tailwind classes like `translate-x-5` combined with positional classes (`right-0.5`, `left-0.5`) cause inconsistent behavior across toggles. Inline `style={{ transform: isEnabled ? "translateX(20px)" : "translateX(0)" }}` is reliable everywhere.
 
 18. **Soft-delete queries must filter `deleted_at IS NULL`.** Every Supabase `.select()` on a soft-delete-enabled table must include `.is("deleted_at", null)`. Missing this filter causes deleted records to reappear in lists. The convention applies to 7 tables: packages, invoices, awbs, courier_groups, warehouse_locations, tags, package_statuses.
+
+19. **Use `dynamic = "force-dynamic"` for auth-protected route groups.** All admin routes require authentication and use client-side hooks. Next.js will attempt to statically prerender pages during build, which fails for auth-protected pages. Adding `export const dynamic = "force-dynamic"` to the route group's `layout.tsx` (e.g., `src/app/(dashboard)/admin/layout.tsx`) prevents this globally for all child routes. Do NOT use `missingSuspenseWithCSRBailout: false` in `next.config.js` — that silences the error without fixing the underlying issue.
+
+20. **Wrap `useSearchParams()` in a `<Suspense>` boundary.** Next.js requires components that call `useSearchParams()` to be wrapped in `<Suspense>` for proper SSR. Without it, the entire page tree bails out of static rendering. The pattern: extract the search-params-dependent logic into a small inner component, wrap it with `<Suspense fallback={...}>` at the call site. See `Sidebar.tsx` → `SettingsTabList` for the reference implementation.
+
+21. **Always check and surface Supabase query errors.** Never destructure only `data` from a Supabase query — always capture `error` too. Pattern: `const { data, error } = await supabase.from("table").select("*"); if (error) { showError("Failed to load"); return; }`. Silently discarding errors causes empty/partial UI states that users can't distinguish from "no data exists."
+
+22. **Admin API routes using service role must verify record ownership.** When an API route uses `supabaseAdmin` (service role) to bypass RLS, it MUST verify the target record's `org_id` matches the authenticated user's org before mutating. Pattern: fetch the record first with the anon client (which respects RLS), confirm it exists and belongs to the user's org, then proceed with the admin client mutation.
+
+23. **Standardize role checks on `role_v2`, never `role`.** The legacy `role` column may be stale or unpopulated for new users. All server-side role checks must use `role_v2` with values `ORG_ADMIN` or `WAREHOUSE_STAFF` (uppercase). Audit any `profile.role` references.
+
+---
+
+## DEPLOYMENT ARCHITECTURE
+
+### Vercel Configuration
+
+- **Platform:** Vercel (auto-deploy from `main` branch on GitHub)
+- **Build:** `next build` with TypeScript strict mode
+- **Rendering strategy:** All admin routes use dynamic rendering (server-side) via `export const dynamic = "force-dynamic"` in `src/app/(dashboard)/admin/layout.tsx`. No static prerendering for auth-protected pages.
+- **Environment variables:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (client-safe), `SUPABASE_SERVICE_ROLE_KEY` (server-only, NOT prefixed with `NEXT_PUBLIC_`)
+- **Image optimization:** Remote patterns restricted to Supabase storage domain
+
+### Build History (April 12, 2026)
+
+| Commit | Issue | Fix |
+|--------|-------|-----|
+| `4e45519` | Initial commit | Multiple TS errors, failed |
+| `ac3cd16` | Missing agent type on customer | Added agent to PackageDetail customer type |
+| `cc88660` | Set iteration with es5 target | Changed tsconfig target to es2017 |
+| `3a33902` | Static prerender of admin pages | ~~Added `missingSuspenseWithCSRBailout: false`~~ (hack, later reverted) |
+| `5dce7fd` | Proper fix for above | Added `dynamic = "force-dynamic"` admin layout, reverted config hack |
+| `64c3228` | Sidebar useSearchParams SSR bailout | Extracted SettingsTabList with `<Suspense>` boundary |

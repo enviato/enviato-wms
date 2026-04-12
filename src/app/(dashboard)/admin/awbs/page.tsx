@@ -183,19 +183,28 @@ export default function AwbsPage() {
   /* ───────── Data loading ───────── */
   useEffect(() => {
     async function loadData() {
-      const { data: awbData } = await supabase
+      const { data: awbData, error: awbError } = await supabase
         .from("awbs")
         .select(`*, courier_group:courier_groups(code, name, logo_url)`)
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(500);
 
+      if (awbError) {
+        console.error("awbs query:", awbError.message);
+        table.showError("Failed to load shipments");
+      }
+
       /* Fetch package stats per AWB (customer count, package count, billable weight) */
-      const { data: pkgData } = await supabase
+      const { data: pkgData, error: pkgError } = await supabase
         .from("packages")
         .select("id, awb_id, customer_id, billable_weight")
         .is("deleted_at", null)
         .not("awb_id", "is", null);
+
+      if (pkgError) {
+        console.error("packages query:", pkgError.message);
+      }
 
       if (awbData) {
         const statsMap: Record<string, { customer_count: number; package_count: number; total_billable_weight: number }> = {};
@@ -225,10 +234,16 @@ export default function AwbsPage() {
         })) as AwbRow[]);
       }
 
-      const { data: grpData } = await supabase.from("courier_groups").select("id, name, code, logo_url").is("deleted_at", null);
+      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, name, code, logo_url").is("deleted_at", null);
+      if (grpError) {
+        console.error("courier_groups query:", grpError.message);
+      }
       if (grpData) setCourierGroups(grpData as { id: string; name: string; code: string; logo_url?: string | null }[]);
 
-      const { data: agentData } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      if (agentError) {
+        console.error("agents query:", agentError.message);
+      }
       if (agentData) setAgentsList(agentData as { id: string; name: string; company_name: string | null; agent_code: string | null }[]);
 
       setLoading(false);

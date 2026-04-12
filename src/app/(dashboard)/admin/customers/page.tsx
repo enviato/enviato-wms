@@ -161,7 +161,7 @@ export default function CustomersPage() {
   useEffect(() => {
     async function loadData() {
       // Load recipients — try with agent join first, fall back without
-      let custData: any[] | null = null;
+      let custData: RecipientRow[] | null = null;
 
       const { data: d1, error: e1 } = await supabase
         .from("users")
@@ -188,13 +188,13 @@ export default function CustomersPage() {
           custData = d2;
           // Merge agent info separately
           if (custData && custData.length > 0) {
-            const agentIds = Array.from(new Set(custData.map((u: any) => u.agent_id).filter(Boolean)));
+            const agentIds = Array.from(new Set(custData.map((u) => u.agent_id).filter(Boolean))) as string[];
             if (agentIds.length > 0) {
               const { data: agentData } = await supabase
                 .from("agents")
                 .select("id, name, company_name, agent_code")
                 .in("id", agentIds);
-              const agentMap = new Map((agentData || []).map((a: any) => [a.id, a]));
+              const agentMap = new Map((agentData || []).map((a) => [a.id, a]));
               for (const user of custData) {
                 user.agent = user.agent_id ? agentMap.get(user.agent_id) || null : null;
               }
@@ -212,10 +212,16 @@ export default function CustomersPage() {
         table.showError("No recipients found (query returned empty)");
       }
 
-      const { data: grpData } = await supabase.from("courier_groups").select("id, code, name").is("deleted_at", null);
+      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, code, name").is("deleted_at", null);
+      if (grpError) {
+        console.error("courier_groups query:", grpError.message);
+      }
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
-      const { data: agentsData } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      const { data: agentsData, error: agentsError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      if (agentsError) {
+        console.error("agents query:", agentsError.message);
+      }
       if (agentsData) setAgentsList(agentsData as AgentItem[]);
 
       setLoading(false);
@@ -350,12 +356,12 @@ export default function CustomersPage() {
               .eq("id", json.id)
               .single();
             if (result) {
-              const enriched: any = { ...result, agent: null, courier_group: null };
+              const enriched: RecipientRow = { ...result, agent: null, courier_group: null } as RecipientRow;
               if (result.agent_id) {
                 const matched = agentsList.find((a) => a.id === result.agent_id);
                 if (matched) enriched.agent = matched;
               }
-              newRecipients.push(enriched as RecipientRow);
+              newRecipients.push(enriched);
               successCount++;
             }
           }
@@ -539,12 +545,12 @@ export default function CustomersPage() {
 
       if (result) {
         // Attach agent info if assigned
-        const enriched: any = { ...result, agent: null, courier_group: null };
+        const enriched: RecipientRow = { ...result, agent: null, courier_group: null } as RecipientRow;
         if (result.agent_id) {
           const matched = agentsList.find((a) => a.id === result.agent_id);
           if (matched) enriched.agent = matched;
         }
-        setRecipients((prev) => [enriched as RecipientRow, ...prev]);
+        setRecipients((prev) => [enriched, ...prev]);
         setShowAddModal(false);
         setFormData({
           first_name: "",

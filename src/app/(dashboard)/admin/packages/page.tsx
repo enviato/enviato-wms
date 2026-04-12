@@ -252,27 +252,33 @@ export default function PackagesPage() {
   /* ───────── Data loading ───────── */
   useEffect(() => {
     async function loadData() {
-      const { data: pkgData } = await supabase
+      const { data: pkgData, error: pkgError } = await supabase
         .from("packages")
         .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`)
         .is("deleted_at", null)
         .order("checked_in_at", { ascending: false })
         .limit(500);
+      if (pkgError) { table.showError("Failed to load packages"); console.error("packages query:", pkgError.message); }
       if (pkgData) setPackages(pkgData as PackageRow[]);
 
-      const { data: custData } = await supabase.from("users").select("id, first_name, last_name, agent_id").eq("role", "customer").is("deleted_at", null);
+      const { data: custData, error: custError } = await supabase.from("users").select("id, first_name, last_name, agent_id").eq("role", "customer").is("deleted_at", null);
+      if (custError) console.error("customers query:", custError.message);
       if (custData) setCustomers(custData as Customer[]);
 
-      const { data: grpData } = await supabase.from("courier_groups").select("id, code, name, logo_url").is("deleted_at", null);
+      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, code, name, logo_url").is("deleted_at", null);
+      if (grpError) console.error("courier_groups query:", grpError.message);
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
-      const { data: agentData } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").order("name");
+      if (agentError) console.error("agents query:", agentError.message);
       if (agentData) setAgentsList(agentData as AgentItem[]);
 
-      const { data: statusData } = await supabase.from("package_statuses").select("*").is("deleted_at", null).order("sort_order");
+      const { data: statusData, error: statusError } = await supabase.from("package_statuses").select("*").is("deleted_at", null).order("sort_order");
+      if (statusError) console.error("statuses query:", statusError.message);
       if (statusData) setPackageStatuses(statusData as PackageStatus[]);
 
-      const { data: tagData } = await supabase.from("tags").select("id, name, color").is("deleted_at", null).order("name");
+      const { data: tagData, error: tagError } = await supabase.from("tags").select("id, name, color").is("deleted_at", null).order("name");
+      if (tagError) console.error("tags query:", tagError.message);
       if (tagData) setTags(tagData as TagItem[]);
 
       setLoading(false);

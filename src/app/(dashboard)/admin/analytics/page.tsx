@@ -36,6 +36,24 @@ type RankingRow = {
   value: number;
 };
 
+/** Shapes returned by the analytics queries — used instead of `any`. */
+type AnalyticsPackageRow = {
+  id: string;
+  checked_in_at: string;
+  checked_out_at: string | null;
+  status: string;
+  customer_id: string | null;
+  courier_group_id: string | null;
+  customer: { first_name: string; last_name: string } | null;
+  courier_group: { name: string; code: string } | null;
+};
+
+type AnalyticsInvoiceRow = {
+  customer_id: string | null;
+  total: number | null;
+  customer: { first_name: string; last_name: string } | null;
+};
+
 export default function AnalyticsPage() {
   const supabase = createClient();
   const [period, setPeriod] = useState<Period>("month");
@@ -238,10 +256,23 @@ export default function AnalyticsPage() {
             .is("deleted_at", null),
         ]);
 
-        const allCheckedIn = checkedInRes.data;
-        const allCheckedOut = checkedOutRes.data;
+        if (checkedInRes.error) {
+          console.error("packages (checked_in) query:", checkedInRes.error.message);
+        }
+        if (checkedOutRes.error) {
+          console.error("packages (checked_out) query:", checkedOutRes.error.message);
+        }
+        if (inStockRes.error) {
+          console.error("packages (in_stock) query:", inStockRes.error.message);
+        }
+        if (invoiceRes.error) {
+          console.error("invoices query:", invoiceRes.error.message);
+        }
+
+        const allCheckedIn = checkedInRes.data as AnalyticsPackageRow[] | null;
+        const allCheckedOut = checkedOutRes.data as { id: string; checked_out_at: string }[] | null;
         const currentInStock = inStockRes.count;
-        const invoiceData = invoiceRes.data;
+        const invoiceData = invoiceRes.data as AnalyticsInvoiceRow[] | null;
 
         const pkgsIn = allCheckedIn || [];
         const pkgsOut = allCheckedOut || [];
@@ -327,7 +358,7 @@ export default function AnalyticsPage() {
 
         // Rankings
         const recipientMap = new Map<string, { name: string; count: number }>();
-        currentPkgsIn.forEach((pkg: any) => {
+        currentPkgsIn.forEach((pkg: AnalyticsPackageRow) => {
           if (pkg.customer_id && pkg.customer) {
             const name = `${pkg.customer.first_name} ${pkg.customer.last_name}`;
             recipientMap.set(pkg.customer_id, {
@@ -343,7 +374,7 @@ export default function AnalyticsPage() {
         setTopScanners([]);
 
         const courierMap = new Map<string, { name: string; count: number }>();
-        currentPkgsIn.forEach((pkg: any) => {
+        currentPkgsIn.forEach((pkg: AnalyticsPackageRow) => {
           if (pkg.courier_group_id && pkg.courier_group) {
             const name = pkg.courier_group.name || pkg.courier_group.code;
             courierMap.set(pkg.courier_group_id, {
@@ -359,7 +390,7 @@ export default function AnalyticsPage() {
 
         const customerMap = new Map<string, { name: string; total: number }>();
         if (invoiceData) {
-          invoiceData.forEach((inv: any) => {
+          invoiceData.forEach((inv: AnalyticsInvoiceRow) => {
             if (inv.customer_id && inv.customer) {
               const name = `${inv.customer.first_name} ${inv.customer.last_name}`;
               const existing = customerMap.get(inv.customer_id);

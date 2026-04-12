@@ -183,12 +183,12 @@ export default function CustomerDetailsPage({
 
         if (!customerError && customerData) {
           // Attach agent info from the agents list we already loaded
-          const enriched: any = { ...customerData, agent: null, courier_group: null };
+          const enriched: Customer = { ...customerData, agent: null, courier_group: null } as Customer;
           if (customerData.agent_id && agentsData) {
-            const matched = agentsData.find((a: any) => a.id === customerData.agent_id);
+            const matched = agentsData.find((a) => a.id === customerData.agent_id);
             if (matched) enriched.agent = { id: matched.id, name: matched.name, company_name: matched.company_name };
           }
-          setCustomer(enriched as Customer);
+          setCustomer(enriched);
           setEmailNotifications(customerData.email_notifications || false);
           setEditForm({ first_name: customerData.first_name, last_name: customerData.last_name, email: customerData.email, phone: customerData.phone || "", agent_id: customerData.agent_id || "" });
         }

@@ -241,7 +241,7 @@ export default function PackageDetailsPage() {
       const { data: tagsData } = await supabase
         .from("tag_definitions")
         .select("id, name, color")
-        .eq("org_id", (pkgData as any).org_id);
+        .eq("org_id", pkgData.org_id);
       if (tagsData) setAvailableTags(tagsData as TagDefinition[]);
 
       // Package tags
@@ -279,7 +279,7 @@ export default function PackageDetailsPage() {
     if (!pkg) return;
     setSaving(true);
     try {
-      const updateData: Record<string, any> = {};
+      const updateData: Record<string, string | number | string[] | null> = {};
 
       if (field === "notes") {
         updateData.notes = value;
@@ -387,7 +387,7 @@ export default function PackageDetailsPage() {
         .single();
 
       if (newCustomer) {
-        setPkg({ ...pkg, customer: newCustomer as any, customer_id: customerId });
+        setPkg({ ...pkg, customer: { ...newCustomer, agent: pkg.customer?.agent ?? null }, customer_id: customerId });
         setShowCustomerDropdown(false);
         setCustomerSearch("");
         setSuccessMessage("Customer reassigned");
@@ -570,10 +570,6 @@ export default function PackageDetailsPage() {
 
   /* ─────────────────── TAGS MANAGEMENT ─────────────────── */
   const assignedTags = availableTags.filter(t => packageTagIds.includes(t.id));
-  const filteredTags = availableTags.filter(
-    t => !packageTagIds.includes(t.id) &&
-         t.name.toLowerCase().includes((window as any).__tagSearch?.toLowerCase() || "")
-  );
 
   const addTagToPackage = async (tagId: string) => {
     if (!pkg) return;

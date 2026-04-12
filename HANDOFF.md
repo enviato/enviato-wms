@@ -1,6 +1,6 @@
 # ENVIATO WMS V2 — Reskin Handoff Document
 
-**Last Updated:** April 4, 2026
+**Last Updated:** April 12, 2026
 **Supabase Project ID:** `ilguqphtephoqlshgpza`
 **Stack:** Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS + Supabase PostgreSQL
 **Figma Reference:** `/mnt/uploads/code.html` (user-uploaded HTML export of the Figma design)
@@ -411,10 +411,10 @@ All modified files pass TypeScript syntax check (TS2307 module resolution errors
 
 ## ADDITIONAL DOCUMENTATION
 
-- `MODULARIZATION.md` — **Phase 7 roadmap**: full modular architecture strategy, target directory structure, 10 module definitions, 4 implementation phases (7A–7D), migration rules, progress tracker. **Read this first for current work direction.**
-- `GO-LIVE-READINESS.md` — **52 tracked issues** across all pages (**49 completed**, 3 remaining P2 items), prioritized P0–P3, Phases 1–6 all complete, Phase 7 (modularization) added, database changes documented
-- `architecture.md` — Modularization overview, dropdown/popover architecture, overflow context map, z-index layer system, component inventory, **standardized page layout**, lessons learned
+- `MODULARIZATION.md` — **Phase 7 roadmap** (COMPLETE): full modular architecture strategy, target directory structure, 10 module definitions, 4 implementation phases (7A–7D), migration rules, progress tracker.
+- `GO-LIVE-READINESS.md` — **76 tracked issues** across all pages (**52 completed**, 24 remaining), prioritized P0–P3, Phases 1–8.5 complete, **Phase 9 (Production Audit)** with prioritized remediation plan, database changes documented
+- `architecture.md` — Modularization overview, dropdown/popover architecture, overflow context map, z-index layer system, component inventory, **standardized page layout**, lessons learned (23 items), **deployment architecture** (Vercel config, build history, rendering strategy)
 - `instructions.md` — Development guidelines for adding dropdowns, modularization conventions, **standardized page layout templates**, CSS class usage guide, overflow rules, z-index conventions, general conventions
 - `css-architecture.md` — CSS custom properties reference, overflow contexts & dropdown implications, CSS class families, **standardized page layout styles**, animations, Tailwind configuration
 
-**Start here when resuming work:** Read `MODULARIZATION.md` first for the current direction (Phase 7 modularization), then `HANDOFF.md` for project overview, then `GO-LIVE-READINESS.md` for the full issue tracker, then `architecture.md` for technical decisions. The packages page (`admin/packages/page.tsx`) is the gold standard — all other pages should match its patterns.
+**Start here when resuming work:** Read `GO-LIVE-READINESS.md` first for the full issue tracker and Phase 9 audit remediation plan, then `architecture.md` for technical patterns (especially lessons 19–23 on deployment, Suspense, and security), then `MODULARIZATION.md` for module structure. The packages page (`admin/packages/page.tsx`) is the gold standard — all other pages should match its patterns.

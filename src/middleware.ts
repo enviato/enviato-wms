@@ -73,6 +73,29 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // ── Server-side role enforcement for admin routes (MT-3) ──
+  // Only ORG_ADMIN and WAREHOUSE_STAFF (and custom-role users with
+  // relevant permissions) may access /admin pages. Customer-role users
+  // are redirected to a future /portal route (or /login for now).
+  if (user && pathname.startsWith("/admin")) {
+    const { data: profile } = await supabase
+      .from("users")
+      .select("role_v2, role_id")
+      .eq("id", user.id)
+      .single();
+
+    const role = profile?.role_v2;
+    const hasAdminRole = role === "ORG_ADMIN" || role === "WAREHOUSE_STAFF";
+    const hasCustomRole = !!profile?.role_id; // custom roles are permission-gated client-side
+
+    if (!hasAdminRole && !hasCustomRole) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("reason", "unauthorized");
+      return NextResponse.redirect(url);
+    }
+  }
+
   return supabaseResponse;
 }
 
