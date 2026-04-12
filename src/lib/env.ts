@@ -1,6 +1,13 @@
 /**
- * Environment variable validation.
- * Import this in layout or middleware to fail fast on missing config.
+ * Server-only environment variable validation.
+ *
+ * IMPORTANT: Do NOT use this module for NEXT_PUBLIC_ vars in client code.
+ * Next.js inlines NEXT_PUBLIC_ vars at build time via static analysis of
+ * `process.env.NEXT_PUBLIC_*` — wrapping them in a module breaks that.
+ * Use `process.env.NEXT_PUBLIC_SUPABASE_URL!` directly in client files.
+ *
+ * This module is for server-only secrets (like the service role key) that
+ * should throw immediately if missing.
  */
 
 function requireEnv(name: string): string {
@@ -14,15 +21,9 @@ function requireEnv(name: string): string {
   return value;
 }
 
-/** Validated env vars — import these instead of using process.env directly. */
-export const env = {
-  NEXT_PUBLIC_SUPABASE_URL: requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
-} as const;
-
 /**
  * Server-only env vars. Only call from server context (API routes, middleware).
- * Lazy-evaluated to avoid errors in client bundles.
+ * Throws immediately if the value is missing.
  */
 export function getServerEnv() {
   return {
