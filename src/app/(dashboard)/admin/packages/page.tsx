@@ -67,7 +67,7 @@ type PackageRow = {
   notes?: string | null;
   condition_tags?: string[] | null;
   customer?: { id: string; first_name: string; last_name: string; agent_id: string | null; deleted_at?: string | null; agent?: { id: string; name: string; company_name: string | null; agent_code: string | null } | null } | null;
-  courier_group?: { code: string; logo_url?: string | null } | null;
+  courier_group?: { code: string; name: string; logo_url?: string | null } | null;
   photos?: Array<{ id: string; storage_url: string; photo_type: string; sort_order: number }>;
 };
 
@@ -256,7 +256,7 @@ export default function PackagesPage() {
     async function loadData() {
       const { data: pkgData, count: pkgCount, error: pkgError } = await supabase
         .from("packages")
-        .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`, { count: "exact", head: false })
+        .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, name, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`, { count: "exact", head: false })
         .is("deleted_at", null)
         .order("checked_in_at", { ascending: false })
         .range(0, 999);
@@ -497,6 +497,7 @@ export default function PackagesPage() {
       if (!orgRow) { logger.error("No organization found"); return; }
 
       const selectedCustomer = customers.find((c) => c.id === formData.customer_id);
+      const selectedCourierGroup = courierGroups.find((g) => g.name === formData.carrier);
       const newPackage = {
         tracking_number: formData.tracking_number, carrier: formData.carrier,
         customer_id: formData.customer_id,
@@ -508,16 +509,17 @@ export default function PackagesPage() {
         notes: formData.notes || null,
         org_id: orgRow.id,
         agent_id: selectedCustomer?.agent_id || null,
+        courier_group_id: selectedCourierGroup?.id || null,
         status: "checked_in", checked_in_at: new Date().toISOString(),
       };
       const { data: result, error } = await supabase
         .from("packages").insert([newPackage])
-        .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`)
+        .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, name, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`)
         .single();
       if (!error && result) {
         setPackages((prev) => [result as PackageRow, ...prev]);
         setShowCreateModal(false);
-        setFormData({ tracking_number: "", carrier: "UPS", customer_id: "", weight: "", weight_unit: "lb", package_type: "box", length: "", width: "", height: "", notes: "" });
+        setFormData({ tracking_number: "", carrier: courierGroups.length > 0 ? courierGroups[0].name : "", customer_id: "", weight: "", weight_unit: "lb", package_type: "box", length: "", width: "", height: "", notes: "" });
         table.setCurrentPage(1);
         showSuccess("Package created");
 
@@ -659,7 +661,10 @@ export default function PackagesPage() {
     try {
       const ids = Array.from(table.selectedIds);
       let updatePayload: Record<string, unknown> = {};
-      if (batchEditField === "carrier") updatePayload = { carrier: batchEditValue };
+      if (batchEditField === "carrier") {
+        const selectedGroup = courierGroups.find((g) => g.name === batchEditValue);
+        updatePayload = { carrier: batchEditValue, courier_group_id: selectedGroup?.id || null };
+      }
       else if (batchEditField === "weight") updatePayload = { weight: batchEditValue ? parseFloat(batchEditValue) : null };
 
       if (batchEditField === "agent") {
@@ -679,7 +684,10 @@ export default function PackagesPage() {
         await Promise.all(ids.map((id) => supabase.from("packages").update(updatePayload).eq("id", id)));
         setPackages((prev) => prev.map((p) => {
           if (!table.selectedIds.has(p.id)) return p;
-          if (batchEditField === "carrier") return { ...p, carrier: batchEditValue };
+          if (batchEditField === "carrier") {
+            const selectedGroup = courierGroups.find((g) => g.name === batchEditValue);
+            return { ...p, carrier: batchEditValue, courier_group_id: selectedGroup?.id || null, courier_group: selectedGroup ? { code: selectedGroup.code, name: selectedGroup.name, logo_url: selectedGroup.logo_url } : p.courier_group };
+          }
           if (batchEditField === "weight") return { ...p, weight: batchEditValue ? parseFloat(batchEditValue) : null };
           return p;
         }));
@@ -887,32 +895,31 @@ export default function PackagesPage() {
         );
 
       case "courier": {
-        const carriers = ["Amazon","Aramex","Canada Post","DHL","FedEx","LaserShip","OnTrac","Royal Mail","SF Express","TNT","UPS","USPS","Other"];
         if (isEditing) {
           return (
             <>
               <span className="courier-badge">{table.editValue || "—"}</span>
               <CellDropdown open={true} onClose={() => table.cancelEdit()} anchorEl={cellAnchorEl} width={200}>
                 <div className="max-h-[280px] overflow-y-auto py-1">
-                  {carriers.map((c) => (
+                  {courierGroups.map((g) => (
                     <button
-                      key={c}
+                      key={g.id}
                       onClick={() => {
                         table.cancelEdit();
                         (async () => {
-                          const { error } = await supabase.from("packages").update({ carrier: c }).eq("id", pkg.id);
+                          const { error } = await supabase.from("packages").update({ carrier: g.name, courier_group_id: g.id }).eq("id", pkg.id);
                           if (!error) {
-                            setPackages((prev) => prev.map((p) => p.id === pkg.id ? { ...p, carrier: c } : p));
+                            setPackages((prev) => prev.map((p) => p.id === pkg.id ? { ...p, carrier: g.name, courier_group_id: g.id, courier_group: { code: g.code, name: g.name, logo_url: g.logo_url } } : p));
                             showSuccess("Updated");
                           }
                         })();
                       }}
                       className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors cursor-pointer
-                        ${c === pkg.carrier ? "bg-primary/5" : "hover:bg-surface-hover"}
+                        ${g.name === pkg.carrier ? "bg-primary/5" : "hover:bg-surface-hover"}
                       `}
                     >
-                      <span className="text-ui text-txt-primary flex-1">{c}</span>
-                      {c === pkg.carrier && <Check size={15} className="text-primary shrink-0" />}
+                      <span className="text-ui text-txt-primary flex-1">{g.name}</span>
+                      {g.name === pkg.carrier && <Check size={15} className="text-primary shrink-0" />}
                     </button>
                   ))}
                 </div>
@@ -920,16 +927,17 @@ export default function PackagesPage() {
             </>
           );
         }
-        return pkg.carrier ? (
+        const displayName = pkg.courier_group?.name ?? pkg.carrier;
+        return displayName ? (
           <span
-            onClick={(e) => { setCellAnchorEl(e.currentTarget); startEditing(pkg.id, "courier", pkg.carrier); }}
+            onClick={(e) => { setCellAnchorEl(e.currentTarget); startEditing(pkg.id, "courier", displayName); }}
             className="cursor-text hover:bg-slate-50 px-1 -mx-1 py-0.5 rounded transition-colors block"
           >
             <span className="courier-badge inline-flex items-center gap-1.5">
               {pkg.courier_group?.logo_url && (
                 <img src={pkg.courier_group.logo_url} alt="" className="w-4 h-4 rounded object-contain" />
               )}
-              {pkg.carrier}
+              {displayName}
             </span>
           </span>
         ) : (
@@ -1445,7 +1453,7 @@ export default function PackagesPage() {
                   onChange={(v) => setFormData({ ...formData, carrier: v })}
                   placeholder="Select a carrier"
                   searchPlaceholder="Search carriers…"
-                  options={["Amazon","Aramex","Canada Post","DHL","FedEx","LaserShip","OnTrac","Royal Mail","SF Express","TNT","UPS","USPS","Other"].map((c) => ({ value: c, label: c }))}
+                  options={courierGroups.map((g) => ({ value: g.name, label: g.name }))}
                 />
               </div>
               <div>
@@ -1746,7 +1754,7 @@ export default function PackagesPage() {
                 <div>
                   <label className="batch-popover-label">New value</label>
                   {batchEditField === "carrier" ? (
-                    <SearchableSelect value={batchEditValue} onChange={(v) => setBatchEditValue(v)} placeholder="Select carrier" searchPlaceholder="Search carriers…" options={["Amazon","Aramex","Canada Post","DHL","FedEx","LaserShip","OnTrac","Royal Mail","SF Express","TNT","UPS","USPS","Other"].map((c) => ({ value: c, label: c }))} />
+                    <SearchableSelect value={batchEditValue} onChange={(v) => setBatchEditValue(v)} placeholder="Select carrier" searchPlaceholder="Search carriers…" options={courierGroups.map((g) => ({ value: g.name, label: g.name }))} />
                   ) : batchEditField === "agent" ? (
                     <SearchableSelect value={batchEditValue} onChange={(v) => setBatchEditValue(v)} placeholder="Select agent" searchPlaceholder="Search agents…" options={agentsList.map((a) => ({ value: a.id, label: a.agent_code ? `${a.agent_code} — ${a.company_name || a.name}` : a.company_name || a.name }))} />
                   ) : (

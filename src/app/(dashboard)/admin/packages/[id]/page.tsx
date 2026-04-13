@@ -52,7 +52,6 @@ import {
   DefaultActivityIllustration,
   getActivityConfig,
   getActivityLabel,
-  STANDARD_CARRIERS,
   PACKAGE_TYPES,
   COMMODITIES,
   computeVolumeWeight,
@@ -120,6 +119,10 @@ export default function PackageDetailsPage() {
   /* ── Tags state ── */
   const [availableTags, setAvailableTags] = useState<TagDefinition[]>([]);
   const [packageTagIds, setPackageTagIds] = useState<string[]>([]);
+
+  /* ── Courier groups state ── */
+  type CourierGroup = { id: string; code: string; name: string; logo_url?: string | null };
+  const [courierGroupsList, setCourierGroupsList] = useState<CourierGroup[]>([]);
 
   /* ── Select Dropdown State ── */
   const [selectDropdownField, setSelectDropdownField] = useState<string | null>(null);
@@ -252,6 +255,13 @@ export default function PackageDetailsPage() {
         .eq("package_id", packageId);
       if (pkgTags) setPackageTagIds(pkgTags.map(pt => pt.tag_id));
 
+      // Courier groups
+      const { data: courierData } = await supabase
+        .from("courier_groups")
+        .select("id, code, name, logo_url")
+        .is("deleted_at", null);
+      if (courierData) setCourierGroupsList(courierData as CourierGroup[]);
+
       setLoading(false);
     } catch (err) {
       logger.error("Error loading package", err);
@@ -288,6 +298,10 @@ export default function PackageDetailsPage() {
         updateData.tracking_number = value;
       } else if (field === "carrier") {
         updateData.carrier = value;
+        const selectedGroup = courierGroupsList.find((g) => g.name === value);
+        if (selectedGroup) {
+          updateData.courier_group_id = selectedGroup.id;
+        }
       } else if (field === "status") {
         updateData.status = value;
       } else if (field === "weight") {
@@ -309,7 +323,14 @@ export default function PackageDetailsPage() {
 
       if (error) throw error;
 
-      setPkg({ ...pkg, ...updateData });
+      let updatedPkg = { ...pkg, ...updateData };
+      if (field === "carrier") {
+        const selectedGroup = courierGroupsList.find((g) => g.name === value);
+        if (selectedGroup) {
+          updatedPkg.courier_group = { code: selectedGroup.code, name: selectedGroup.name };
+        }
+      }
+      setPkg(updatedPkg);
       setEditingField(null);
       setEditValue("");
       setSuccessMessage("Saved successfully");
@@ -1138,7 +1159,7 @@ export default function PackageDetailsPage() {
                       ) : undefined
                     }
                     type="select"
-                    selectOptions={STANDARD_CARRIERS}
+                    selectOptions={courierGroupsList.map((g) => ({ value: g.name, label: g.name }))}
                   />
                   <FieldRow
                     field="courier_group"

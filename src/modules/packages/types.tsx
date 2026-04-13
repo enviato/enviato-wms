@@ -262,23 +262,6 @@ export const DefaultActivityIllustration = {
 export const getActivityConfig = (action: string) => ActivityIllustrations[action] || DefaultActivityIllustration;
 export const getActivityLabel = (action: string) => ActivityIllustrations[action]?.label || action.replace(/_/g, " ");
 
-/* ─────────── Standard Carriers (fixed options) ─────────── */
-export const STANDARD_CARRIERS = [
-  { value: "Amazon", label: "Amazon" },
-  { value: "Aramex", label: "Aramex" },
-  { value: "Canada Post", label: "Canada Post" },
-  { value: "DHL", label: "DHL" },
-  { value: "FedEx", label: "FedEx" },
-  { value: "LaserShip", label: "LaserShip" },
-  { value: "OnTrac", label: "OnTrac" },
-  { value: "Royal Mail", label: "Royal Mail" },
-  { value: "SF Express", label: "SF Express" },
-  { value: "TNT", label: "TNT" },
-  { value: "UPS", label: "UPS" },
-  { value: "USPS", label: "USPS" },
-  { value: "Other", label: "Other" },
-];
-
 export const PACKAGE_TYPES = [
   { value: "bag", label: "Bag" },
   { value: "box", label: "Box" },

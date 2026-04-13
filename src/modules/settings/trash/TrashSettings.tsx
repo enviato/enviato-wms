@@ -45,7 +45,7 @@ const TRASH_TABS: TrashTab[] = [
   { key: "package", label: "Packages", icon: Package },
   { key: "shipment", label: "Shipments", icon: Plane },
   { key: "invoice", label: "Invoices", icon: Receipt },
-  { key: "courier", label: "Couriers", icon: Truck },
+  { key: "courier", label: "Shipping Carriers", icon: Truck },
   { key: "location", label: "Locations", icon: MapPin },
   { key: "tag", label: "Tags", icon: Tag },
   { key: "status", label: "Statuses", icon: CircleDot },

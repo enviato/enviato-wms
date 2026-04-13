@@ -48,7 +48,7 @@ const SETTINGS_TABS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "users", label: "Users", icon: Users },
   { id: "roles", label: "Roles & Permissions", icon: Shield },
   { id: "agents", label: "Agents", icon: Network },
-  { id: "couriers", label: "Courier Groups", icon: Truck },
+  { id: "couriers", label: "Shipping Carriers", icon: Truck },
   { id: "packageid", label: "Package ID", icon: Hash },
   { id: "locations", label: "Warehouse Locations", icon: MapPin },
   { id: "tags", label: "Tags", icon: Tag },

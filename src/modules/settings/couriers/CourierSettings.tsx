@@ -98,7 +98,7 @@ export default function CourierSettings() {
         setCourierFormOpen(false);
         const { data } = await supabase.from("courier_groups").select("*").is("deleted_at", null);
         if (data) setCouriers(data);
-        showSuccess("Courier company added");
+        showSuccess("Shipping carrier added");
       } else {
         logger.error("Error adding courier:", error);
         showError("Failed to add courier: " + error.message);
@@ -148,7 +148,7 @@ export default function CourierSettings() {
       setEditCourier(null);
       const { data } = await supabase.from("courier_groups").select("*").is("deleted_at", null);
       if (data) setCouriers(data);
-      showSuccess("Courier company updated");
+      showSuccess("Shipping carrier updated");
     } catch (error) {
       showError("Failed to update courier");
       logger.error("Error updating courier:", error);
@@ -204,7 +204,7 @@ export default function CourierSettings() {
 
       setDeletingCourierId(null);
       setCouriers(couriers.filter((c) => c.id !== id));
-      showSuccess("Courier company deleted");
+      showSuccess("Shipping carrier deleted");
     } catch (error) {
       logger.error("Error deleting courier:", error);
       showError("Failed to delete courier");
@@ -225,12 +225,12 @@ export default function CourierSettings() {
       <div className="bg-white border border-border rounded-lg shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
-            <h2 className="text-ui font-semibold text-txt-primary">Courier Companies</h2>
-            <p className="text-muted text-txt-tertiary mt-0.5">Manage your courier partners</p>
+            <h2 className="text-ui font-semibold text-txt-primary">Shipping Carriers</h2>
+            <p className="text-muted text-txt-tertiary mt-0.5">Manage your shipping carriers</p>
           </div>
           <button onClick={() => setCourierFormOpen(true)} className="btn-primary flex items-center gap-2">
             <Plus className="w-4 h-4" />
-            Add courier
+            Add carrier
           </button>
         </div>
 
@@ -240,7 +240,7 @@ export default function CourierSettings() {
               <thead className="sheet-thead">
                 <tr>
                   <th className="sheet-th" style={{ width: '45%' }}>
-                    <span>Company</span>
+                    <span>Carrier</span>
                     <span className="sheet-th-sep" />
                   </th>
                   <th className="sheet-th" style={{ width: '25%' }}>
@@ -257,8 +257,8 @@ export default function CourierSettings() {
                   <tr>
                     <td colSpan={3} className="sheet-cell text-center py-16">
                       <div className="empty-state">
-                        <p className="empty-state-title">No courier companies yet</p>
-                        <p className="empty-state-desc">Click "Add courier" to create one</p>
+                        <p className="empty-state-title">No shipping carriers yet</p>
+                        <p className="empty-state-desc">Click "Add carrier" to create one</p>
                       </div>
                     </td>
                   </tr>
@@ -324,7 +324,7 @@ export default function CourierSettings() {
         <div className="modal-overlay z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="modal-panel max-w-lg w-full space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-[16px] font-semibold text-txt-primary">Add courier company</h3>
+              <h3 className="text-[16px] font-semibold text-txt-primary">Add shipping carrier</h3>
               <button onClick={() => setCourierFormOpen(false)} className="p-1 text-txt-tertiary hover:text-txt-primary transition-colors duration-150 cursor-pointer">
                 <X size={18} />
               </button>
@@ -333,7 +333,7 @@ export default function CourierSettings() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Company name</label>
+                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Carrier name</label>
                   <input type="text" placeholder="e.g. FedEx" value={courierForm.name} onChange={(e) => setCourierForm({ ...courierForm, name: e.target.value })} className="form-input" />
                 </div>
                 <div>
@@ -347,19 +347,19 @@ export default function CourierSettings() {
               <button onClick={() => setCourierFormOpen(false)} className="btn-secondary">Cancel</button>
               <button onClick={handleAddCourier} className="btn-primary flex items-center gap-2">
                 <Check className="w-4 h-4" />
-                Add courier
+                Add carrier
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Edit Courier Modal ── */}
+      {/* ── Edit Carrier Modal ── */}
       {editCourierOpen && editCourier && (
         <div className="modal-overlay z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="modal-panel max-w-lg w-full space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-[16px] font-semibold text-txt-primary">Edit courier company</h3>
+              <h3 className="text-[16px] font-semibold text-txt-primary">Edit shipping carrier</h3>
               <button onClick={() => { setEditCourierOpen(false); setEditCourier(null); }} className="p-1 text-txt-tertiary hover:text-txt-primary transition-colors duration-150 cursor-pointer">
                 <X size={18} />
               </button>
@@ -395,7 +395,7 @@ export default function CourierSettings() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Company name</label>
+                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Carrier name</label>
                   <input type="text" placeholder="e.g. FedEx" value={editCourierName} onChange={(e) => setEditCourierName(e.target.value)} className="form-input" />
                 </div>
                 <div>
@@ -416,7 +416,7 @@ export default function CourierSettings() {
         </div>
       )}
 
-      {/* ── Delete Courier Confirmation ── */}
+      {/* ── Delete Carrier Confirmation ── */}
       {deletingCourierId && (
         <div className="modal-overlay z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="modal-panel max-w-sm w-full space-y-4">
@@ -425,8 +425,8 @@ export default function CourierSettings() {
                 <AlertTriangle className="w-5 h-5 text-red-500" />
               </div>
               <div>
-                <h3 className="text-title font-semibold text-txt-primary">Delete courier company</h3>
-                <p className="text-ui-sm text-txt-tertiary mt-0.5">This action cannot be undone. Any shipments linked to this courier will be affected.</p>
+                <h3 className="text-title font-semibold text-txt-primary">Delete shipping carrier</h3>
+                <p className="text-ui-sm text-txt-tertiary mt-0.5">This action cannot be undone. Any shipments linked to this carrier will be affected.</p>
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">
