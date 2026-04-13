@@ -23,6 +23,7 @@ export default function OceanCarrierSettings() {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
   const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -76,6 +77,13 @@ export default function OceanCarrierSettings() {
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (authUser) {
           setCurrentUserId(authUser.id);
+          // Fetch org_id for RLS compliance on inserts
+          const { data: userData } = await supabase
+            .from("users")
+            .select("org_id")
+            .eq("id", authUser.id)
+            .single();
+          if (userData?.org_id) setOrgId(userData.org_id);
         }
 
         // Load ocean carriers
@@ -115,6 +123,7 @@ export default function OceanCarrierSettings() {
         zip_code: carrierForm.zipCode || null,
         country: carrierForm.country || null,
         type: "ocean",
+        org_id: orgId,
       });
 
       if (!error) {
