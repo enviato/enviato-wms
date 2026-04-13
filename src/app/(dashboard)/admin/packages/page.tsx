@@ -894,7 +894,7 @@ export default function PackagesPage() {
           </span>
         );
 
-      case "courier": {
+      case "carrier": {
         if (isEditing) {
           return (
             <>
