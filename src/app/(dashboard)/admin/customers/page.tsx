@@ -167,7 +167,7 @@ export default function CustomersPage() {
 
       const { data: d1, count: c1, error: e1 } = await supabase
         .from("users")
-        .select(`*, courier_group:courier_groups(code, name), agent:agents(id, name, company_name, agent_code)`, { count: "exact", head: false })
+        .select(`*, courier_group:courier_groups!fk_users_courier_group(code, name), agent:agents!users_agent_id_fkey(id, name, company_name, agent_code)`, { count: "exact", head: false })
         .eq("role", "customer")
         .order("created_at", { ascending: false })
         .range(0, 999);
