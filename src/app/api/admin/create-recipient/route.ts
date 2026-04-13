@@ -3,6 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createRateLimiter } from "@/shared/lib/rate-limit";
 import { checkCsrf } from "@/shared/lib/csrf";
+import { logger } from "@/shared/lib/logger";
 
 const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
 
@@ -176,7 +177,7 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Internal server error";
-    console.error("Create recipient error:", message);
+    logger.error("Create recipient error", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

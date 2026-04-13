@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import type { User, Organization, UserRole } from "@/shared/types/database";
 import type { AuthUser, AuthState, PermissionSet } from "@/shared/types/auth";
 
@@ -153,7 +154,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (error) {
-      console.error("AuthProvider: Failed to load auth data", error);
+      logger.error("AuthProvider: Failed to load auth data", error);
     } finally {
       setLoading(false);
     }

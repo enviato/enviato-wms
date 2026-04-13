@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { logger } from "@/shared/lib/logger";
 import { createClient } from "@/lib/supabase";
 import {
   Printer,
@@ -94,7 +95,7 @@ export default function LabelSettings() {
           setAutoPrintOnCheckin(v.enabled === true);
         }
       } catch (error) {
-        console.error("Error loading label settings:", error);
+        logger.error("Error loading label settings:", error);
         showError("Failed to load label settings");
       } finally {
         setLoading(false);
@@ -125,7 +126,7 @@ export default function LabelSettings() {
             });
           }
         } catch (e) {
-          console.error("Barcode render error:", e);
+          logger.error("Barcode render error:", e);
         }
       };
       // Immediate + delayed render to ensure DOM is ready
@@ -153,7 +154,7 @@ export default function LabelSettings() {
           .update({ fields: updated.fields })
           .eq("id", labelTemplate.id);
       } catch (error) {
-        console.error("Error updating label template:", error);
+        logger.error("Error updating label template:", error);
         showError("Failed to update label field");
       }
     }
@@ -176,7 +177,7 @@ export default function LabelSettings() {
       );
       showSuccess(newVal ? "Auto-print enabled" : "Auto-print disabled");
     } catch (err) {
-      console.error("Error saving auto-print setting:", err);
+      logger.error("Error saving auto-print setting:", err);
       setAutoPrintOnCheckin(!newVal); // revert on error
       showError("Failed to save auto-print setting");
     }
@@ -380,7 +381,7 @@ export default function LabelSettings() {
         a.remove();
         URL.revokeObjectURL(url);
       } catch (err) {
-        console.error("Save PDF error:", err);
+        logger.error("Save PDF error:", err);
       }
       if (btn) {
         btn.disabled = false;
@@ -399,7 +400,7 @@ export default function LabelSettings() {
         const { printLabelHtml } = await import("@/lib/print-pdf");
         await printLabelHtml(labelHtml, W, H);
       } catch (err) {
-        console.error("Print error:", err);
+        logger.error("Print error:", err);
       }
       if (btn) {
         btn.disabled = false;

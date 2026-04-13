@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import NotificationBell from "@/modules/notifications/components/NotificationBell";
 import { SuccessToast } from "@/shared/components/forms";
 import {
@@ -258,7 +259,7 @@ export default function AwbDetailPage() {
 
       /* Fetch org_id dynamically */
       const { data: orgRow } = await supabase.from("organizations").select("id").limit(1).single();
-      if (!orgRow) { console.error("No organization found"); return; }
+      if (!orgRow) { logger.error("No organization found"); return; }
 
       /* Create the invoice */
       const { data: invoice, error: invErr } = await supabase
@@ -281,7 +282,7 @@ export default function AwbDetailPage() {
         .single();
 
       if (invErr || !invoice) {
-        console.error("Error creating invoice:", invErr);
+        logger.error("Error creating invoice", invErr);
         return;
       }
 
@@ -299,7 +300,7 @@ export default function AwbDetailPage() {
           description: l.description,
         }))
       );
-      if (linesErr) console.error("Error creating invoice lines:", linesErr);
+      if (linesErr) logger.error("Error creating invoice lines", linesErr);
 
       /* Link packages to the invoice */
       const packageIds = group.packages.map((p) => p.id);

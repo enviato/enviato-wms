@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import { Building2, Save, Loader2 } from "lucide-react";
 
 type OrganizationForm = {
@@ -78,7 +79,7 @@ export default function GeneralSettings() {
         showError("Failed to save: " + error.message);
       }
     } catch (error) {
-      console.error("Error saving general settings:", error);
+      logger.error("Error saving general settings", error);
       showError("Failed to save settings");
     } finally {
       setSaving(false);

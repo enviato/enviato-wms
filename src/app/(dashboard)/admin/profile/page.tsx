@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import { User, Mail, Phone, Save, LogOut, Loader2, CheckCircle2, Shield } from "lucide-react";
 
 export default function ProfilePage() {
@@ -45,7 +46,7 @@ export default function ProfilePage() {
 
         if (userError) {
           setError("Failed to load profile");
-          console.error(userError);
+          logger.error("Failed to load profile", userError);
           return;
         }
 
@@ -57,7 +58,7 @@ export default function ProfilePage() {
         }
       } catch (err) {
         setError("An error occurred while loading your profile");
-        console.error(err);
+        logger.error("An error occurred while loading your profile", err);
       } finally {
         setLoading(false);
       }
@@ -83,7 +84,7 @@ export default function ProfilePage() {
 
       if (updateError) {
         setError("Failed to save changes");
-        console.error(updateError);
+        logger.error("Failed to save changes", updateError);
         setSaving(false);
         return;
       }
@@ -92,7 +93,7 @@ export default function ProfilePage() {
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       setError("An error occurred while saving");
-      console.error(err);
+      logger.error("An error occurred while saving", err);
     } finally {
       setSaving(false);
     }
@@ -104,7 +105,7 @@ export default function ProfilePage() {
       router.push("/login");
     } catch (err) {
       setError("Failed to sign out");
-      console.error(err);
+      logger.error("Failed to sign out", err);
     }
   };
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import { Save, Loader2 } from "lucide-react";
 
 type NotificationFlags = {
@@ -108,7 +109,7 @@ export default function NotificationSettings() {
         showError("Failed to save: " + error.message);
       }
     } catch (error) {
-      console.error("Error saving notifications:", error);
+      logger.error("Error saving notifications", error);
       showError("Failed to save notification settings");
     } finally {
       setSaving(false);

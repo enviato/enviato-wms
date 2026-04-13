@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import { adminDelete } from "@/lib/admin-delete";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
@@ -98,6 +99,7 @@ export default function CustomersPage() {
   /* Data state */
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [serverTotal, setServerTotal] = useState(0);
   const [courierGroups, setCourierGroups] = useState<CourierGroup[]>([]);
   const [agentsList, setAgentsList] = useState<AgentItem[]>([]);
 
@@ -163,29 +165,30 @@ export default function CustomersPage() {
       // Load recipients — try with agent join first, fall back without
       let custData: RecipientRow[] | null = null;
 
-      const { data: d1, error: e1 } = await supabase
+      const { data: d1, count: c1, error: e1 } = await supabase
         .from("users")
-        .select(`*, courier_group:courier_groups(code, name), agent:agents(id, name, company_name, agent_code)`)
+        .select(`*, courier_group:courier_groups(code, name), agent:agents(id, name, company_name, agent_code)`, { count: "exact", head: false })
         .eq("role", "customer")
         .order("created_at", { ascending: false })
-        .limit(500);
+        .range(0, 999);
 
       if (e1) {
-        console.warn("[Recipients] Join query failed:", e1.message, e1.code, e1.details);
+        logger.warn("[Recipients] Join query failed", { message: e1.message, code: e1.code, details: e1.details });
 
         // Fallback: no joins at all
-        const { data: d2, error: e2 } = await supabase
+        const { data: d2, count: c2, error: e2 } = await supabase
           .from("users")
-          .select("*")
+          .select("*", { count: "exact", head: false })
           .eq("role", "customer")
           .order("created_at", { ascending: false })
-          .limit(500);
+          .range(0, 999);
 
         if (e2) {
-          console.error("[Recipients] Basic query also failed:", e2.message, e2.code);
+          logger.error("[Recipients] Basic query also failed", e2);
           table.showError("Failed to load recipients: " + e2.message);
         } else {
           custData = d2;
+          if (c2 != null) setServerTotal(c2);
           // Merge agent info separately
           if (custData && custData.length > 0) {
             const agentIds = Array.from(new Set(custData.map((u) => u.agent_id).filter(Boolean))) as string[];
@@ -203,6 +206,7 @@ export default function CustomersPage() {
         }
       } else {
         custData = d1;
+        if (c1 != null) setServerTotal(c1);
       }
 
       if (custData) {
@@ -214,13 +218,13 @@ export default function CustomersPage() {
 
       const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, code, name").is("deleted_at", null);
       if (grpError) {
-        console.error("courier_groups query:", grpError.message);
+        logger.error("courier_groups query", grpError);
       }
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
       const { data: agentsData, error: agentsError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentsError) {
-        console.error("agents query:", agentsError.message);
+        logger.error("agents query", agentsError);
       }
       if (agentsData) setAgentsList(agentsData as AgentItem[]);
 
@@ -1092,6 +1096,14 @@ export default function CustomersPage() {
             </button>
           )}
         </div>
+
+        {/* Truncation Warning Banner */}
+        {serverTotal > recipients.length && (
+          <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-2 flex items-center gap-2 text-meta text-amber-700">
+            <AlertTriangle size={14} />
+            Showing {recipients.length.toLocaleString()} of {serverTotal.toLocaleString()} records. Use filters to narrow results.
+          </div>
+        )}
 
         {/* ════════ Spreadsheet Table Container ════════ */}
         <div className="sheet-table-wrap">

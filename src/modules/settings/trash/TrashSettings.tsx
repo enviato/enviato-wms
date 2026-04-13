@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { logger } from "@/shared/lib/logger";
 import { createClient } from "@/lib/supabase";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import {
@@ -282,7 +283,7 @@ export default function TrashSettings() {
       );
       setTrashItems(items);
     } catch (err) {
-      console.error("Error loading trash items:", err);
+      logger.error("Error loading trash items:", err);
     } finally {
       setTrashLoading(false);
     }
@@ -302,7 +303,7 @@ export default function TrashSettings() {
         setRetentionPermanent(v.permanent ?? false);
       }
     } catch (err) {
-      console.error("Error loading retention settings:", err);
+      logger.error("Error loading retention settings:", err);
     }
   };
 
@@ -331,7 +332,7 @@ export default function TrashSettings() {
         showError("Failed to save: " + error.message);
       }
     } catch (err) {
-      console.error("Error saving retention settings:", err);
+      logger.error("Error saving retention settings:", err);
       showError("Failed to save retention settings");
     } finally {
       setSavingRetention(false);
@@ -360,13 +361,13 @@ export default function TrashSettings() {
             body: JSON.stringify({ userId: item.id }),
           });
         } catch (authErr) {
-          console.warn("Failed to unban auth user:", authErr);
+          logger.warn("Failed to unban auth user:");
         }
       }
       setTrashItems((prev) => prev.filter((t) => t.id !== item.id));
       showSuccess(`${item.label} restored`);
     } catch (err) {
-      console.error("Restore error:", err);
+      logger.error("Restore error:", err);
       showError("Failed to restore item");
     } finally {
       setRestoringId(null);
@@ -404,7 +405,7 @@ export default function TrashSettings() {
         }
       }
     } catch (err) {
-      console.error("Permanent delete error:", err);
+      logger.error("Permanent delete error:", err);
       showError("Failed to permanently delete");
     } finally {
       setPermanentDeleting(false);

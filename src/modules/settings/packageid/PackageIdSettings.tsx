@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import { Loader2, Save } from "lucide-react";
 
@@ -70,7 +71,7 @@ export default function PackageIdSettings() {
           }
         }
       } catch (error) {
-        console.error("Error loading package ID settings:", error);
+        logger.error("Error loading package ID settings", error);
         showError("Failed to load package ID settings");
       } finally {
         setLoading(false);
@@ -102,7 +103,7 @@ export default function PackageIdSettings() {
         }
       }
     } catch (error) {
-      console.error("Error saving package ID config:", error);
+      logger.error("Error saving package ID config", error);
       showError("An error occurred while saving");
     } finally {
       setSavingPackageId(false);

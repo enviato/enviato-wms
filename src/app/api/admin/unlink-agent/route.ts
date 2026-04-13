@@ -3,6 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createRateLimiter } from "@/shared/lib/rate-limit";
 import { checkCsrf } from "@/shared/lib/csrf";
+import { logger } from "@/shared/lib/logger";
 
 const limiter = createRateLimiter({ windowMs: 60_000, max: 20 });
 
@@ -86,14 +87,14 @@ export async function POST(req: NextRequest) {
     });
 
     if (error) {
-      console.error("Unlink agent RPC error:", error);
+      logger.error("Unlink agent RPC error", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error";
-    console.error("Unlink agent error:", message);
+    logger.error("Unlink agent error", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

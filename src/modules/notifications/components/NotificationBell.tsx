@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Bell, Check, Package, Truck, FileText, Plane } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import type { Notification } from "../types";
 
 const TYPE_ICON: Record<string, typeof Package> = {
@@ -63,7 +64,7 @@ export default function NotificationBell() {
         .limit(30);
       if (data) setNotifications(data);
     } catch (err) {
-      console.error("Error fetching notifications:", err);
+      logger.error("Error fetching notifications", err);
     } finally {
       setLoading(false);
     }

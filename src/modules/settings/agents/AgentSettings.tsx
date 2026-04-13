@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import { createClient } from "@/lib/supabase";
 import {
@@ -177,26 +178,26 @@ export default function AgentSettings() {
       ]);
 
       if (agentsRes.error) {
-        console.error("Error loading agents:", agentsRes.error);
+        logger.error("Error loading agents:", agentsRes.error);
         showError("Failed to load agents: " + agentsRes.error.message);
       } else if (agentsRes.data) {
         setAgents(agentsRes.data);
       }
 
       if (edgesRes.error) {
-        console.warn("agent_edges query failed (table may not exist yet):", edgesRes.error.message);
+        logger.warn("agent_edges query failed (table may not exist yet):");
         setAgentEdges([]);
       } else if (edgesRes.data) {
         setAgentEdges(edgesRes.data);
       }
 
       if (usersRes.error) {
-        console.error("Error loading users:", usersRes.error);
+        logger.error("Error loading users:", usersRes.error);
       } else if (usersRes.data) {
         setUsers(usersRes.data);
       }
     } catch (error) {
-      console.error("Error loading agent data:", error);
+      logger.error("Error loading agent data:", error);
       showError("Failed to load agents");
     } finally {
       setLoading(false);
@@ -336,7 +337,7 @@ export default function AgentSettings() {
           org_id: newAgent.org_id || null,
         });
         if (edgeErr) {
-          console.error("Error creating agent edge:", edgeErr);
+          logger.error("Error creating agent edge:", edgeErr);
           showError("Agent created but failed to link parent: " + edgeErr.message);
         } else {
           const { data: edgesData } = await supabase.from("agent_edges").select("*");
@@ -366,7 +367,7 @@ export default function AgentSettings() {
         showSuccess("Agent created");
       }
     } catch (error) {
-      console.error("Error creating agent:", error);
+      logger.error("Error creating agent:", error);
       showError("Failed to create agent");
     }
   };
@@ -379,7 +380,7 @@ export default function AgentSettings() {
       setEditingAgentId(null);
       showSuccess("Agent renamed");
     } catch (error) {
-      console.error("Error renaming agent:", error);
+      logger.error("Error renaming agent:", error);
       showError("Failed to rename agent");
     }
   };
@@ -408,7 +409,7 @@ export default function AgentSettings() {
       setSelectedAgentId(null);
       showSuccess("Agent deleted");
     } catch (error) {
-      console.error("Error deleting agent:", error);
+      logger.error("Error deleting agent:", error);
       showError("Failed to delete agent");
     }
   };
@@ -444,7 +445,7 @@ export default function AgentSettings() {
         showSuccess("Agent info saved");
       }
     } catch (err) {
-      console.error("Error saving agent info:", err);
+      logger.error("Error saving agent info:", err);
       showError("Failed to save agent info");
     } finally {
       setSavingAgentInfo(false);
@@ -476,7 +477,7 @@ export default function AgentSettings() {
         org_id: parentAgent?.org_id || null,
       });
       if (insertErr) {
-        console.error("Error inserting agent_edge:", insertErr);
+        logger.error("Error inserting agent_edge:", insertErr);
         showError(insertErr.message || "Failed to link sub-agent");
         return;
       }
@@ -485,7 +486,7 @@ export default function AgentSettings() {
       setAddChildOpen(false);
       showSuccess("Sub-agent linked");
     } catch (error) {
-      console.error("Error linking sub-agent:", error);
+      logger.error("Error linking sub-agent:", error);
       showError("Failed to link sub-agent");
     }
   };
@@ -498,7 +499,7 @@ export default function AgentSettings() {
         p_child_id: childId,
       });
       if (rpcErr) {
-        console.error("Error unlinking sub-agent:", rpcErr);
+        logger.error("Error unlinking sub-agent:", rpcErr);
         showError(rpcErr.message || "Failed to unlink sub-agent");
         return;
       }
@@ -506,7 +507,7 @@ export default function AgentSettings() {
       if (edgesData) setAgentEdges(edgesData);
       showSuccess("Sub-agent unlinked");
     } catch (error) {
-      console.error("Error unlinking sub-agent:", error);
+      logger.error("Error unlinking sub-agent:", error);
       showError("Failed to unlink sub-agent");
     }
   };

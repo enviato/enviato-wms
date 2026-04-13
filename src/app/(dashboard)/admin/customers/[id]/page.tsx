@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import { DetailRow, SuccessToast, Toggle } from "@/shared/components/forms";
 import {
@@ -117,7 +118,7 @@ export default function CustomerDetailsPage({
         showSuccess(msg); // reuse the toast for now
       }
     } catch (error) {
-      console.error("Error deleting customer:", error);
+      logger.error("Error deleting customer", error);
     } finally {
       setDeleting(false);
     }
@@ -130,7 +131,7 @@ export default function CustomerDetailsPage({
       await supabase.from("users").update({ email_notifications: newValue }).eq("id", params.id);
       showSuccess(newValue ? "Notifications enabled" : "Notifications disabled");
     } catch (error) {
-      console.error("Error updating notifications:", error);
+      logger.error("Error updating notifications", error);
       setEmailNotifications(!newValue);
     }
   };
@@ -161,7 +162,7 @@ export default function CustomerDetailsPage({
         showSuccess("Recipient updated");
       }
     } catch (error) {
-      console.error("Error saving customer:", error);
+      logger.error("Error saving customer", error);
     } finally {
       setSaving(false);
     }
@@ -214,7 +215,7 @@ export default function CustomerDetailsPage({
         if (shippedData) setShippedPackages(shippedData as PackageRow[]);
         setLoading(false);
       } catch (error) {
-        console.error("Error loading data:", error);
+        logger.error("Error loading data", error);
         setLoading(false);
       }
     }

@@ -3,6 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createRateLimiter } from "@/shared/lib/rate-limit";
 import { checkCsrf } from "@/shared/lib/csrf";
+import { logger } from "@/shared/lib/logger";
 
 const limiter = createRateLimiter({ windowMs: 60_000, max: 10 });
 
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest) {
       .eq("id", userId);
 
     if (deleteError) {
-      console.error("Failed to delete user row:", deleteError);
+      logger.error("Failed to delete user row", deleteError);
       return NextResponse.json(
         { error: deleteError.message },
         { status: 500 }
@@ -98,13 +99,13 @@ export async function POST(req: NextRequest) {
     try {
       await admin.auth.admin.deleteUser(userId);
     } catch (authErr) {
-      console.warn("Failed to delete auth user (may already be removed):", authErr);
+      logger.warn("Failed to delete auth user (may already be removed)", { error: authErr });
     }
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error";
-    console.error("Permanent delete user error:", message);
+    logger.error("Permanent delete user error", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase";
-import { BarChart } from "@mui/x-charts/BarChart";
-import { LineChart } from "@mui/x-charts/LineChart";
+import { logger } from "@/shared/lib/logger";
+import {
+  BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
 import NotificationBell from "@/modules/notifications/components/NotificationBell";
 import {
   ArrowUpRight,
@@ -257,16 +260,16 @@ export default function AnalyticsPage() {
         ]);
 
         if (checkedInRes.error) {
-          console.error("packages (checked_in) query:", checkedInRes.error.message);
+          logger.error("packages (checked_in) query", checkedInRes.error);
         }
         if (checkedOutRes.error) {
-          console.error("packages (checked_out) query:", checkedOutRes.error.message);
+          logger.error("packages (checked_out) query", checkedOutRes.error);
         }
         if (inStockRes.error) {
-          console.error("packages (in_stock) query:", inStockRes.error.message);
+          logger.error("packages (in_stock) query", inStockRes.error);
         }
         if (invoiceRes.error) {
-          console.error("invoices query:", invoiceRes.error.message);
+          logger.error("invoices query", invoiceRes.error);
         }
 
         const allCheckedIn = checkedInRes.data as AnalyticsPackageRow[] | null;
@@ -406,7 +409,7 @@ export default function AnalyticsPage() {
             .map((item, idx) => ({ rank: idx + 1, name: item.name, value: Math.round(item.total * 100) / 100 }))
         );
       } catch (error) {
-        console.error("Error loading analytics:", error);
+        logger.error("Error loading analytics", error);
       } finally {
         setLoading(false);
       }
@@ -538,20 +541,6 @@ function ChartCard({ title, loading, children }: { title: string; loading: boole
 
 /* ───────── Responsive Bar Chart ───────── */
 function ResponsiveBarChart({ data, color = "#484c5b" }: { data: ChartData[]; color?: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(500);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setWidth(entry.contentRect.width);
-      }
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
   if (!data || data.length === 0) {
     return <div className="h-64 flex items-center justify-center text-txt-tertiary text-ui-sm">No data available</div>;
   }
@@ -559,37 +548,20 @@ function ResponsiveBarChart({ data, color = "#484c5b" }: { data: ChartData[]; co
   const chartData = data.map((d) => ({ ...d, date: fmtDate(d.date) }));
 
   return (
-    <div ref={containerRef} className="w-full overflow-hidden">
-      <BarChart
-        dataset={chartData}
-        xAxis={[{ scaleType: "band" as const, dataKey: "date" }]}
-        series={[{ dataKey: "count", label: "Count", color }]}
-        width={width}
-        height={280}
-        margin={{ top: 10, bottom: 30, left: 40, right: 10 }}
-        slotProps={{ legend: { hidden: true } as Record<string, unknown> }}
-        sx={chartSx}
-      />
-    </div>
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={chartData} margin={{ top: 10, bottom: 0, left: 0, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e9e9eb" vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: "#85878b", fontSize: 11 }} axisLine={{ stroke: "#e9e9eb" }} tickLine={false} />
+        <YAxis tick={{ fill: "#85878b", fontSize: 11 }} axisLine={{ stroke: "#e9e9eb" }} tickLine={false} allowDecimals={false} />
+        <Tooltip contentStyle={{ borderRadius: 6, border: "1px solid #e9e9eb", fontSize: 12 }} />
+        <Bar dataKey="count" fill={color} radius={[3, 3, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
 /* ───────── Responsive Line Chart ───────── */
 function ResponsiveLineChart({ data }: { data: ChartData[] }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(500);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setWidth(entry.contentRect.width);
-      }
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
   if (!data || data.length === 0) {
     return <div className="h-64 flex items-center justify-center text-txt-tertiary text-ui-sm">No data available</div>;
   }
@@ -597,18 +569,15 @@ function ResponsiveLineChart({ data }: { data: ChartData[] }) {
   const chartData = data.map((d) => ({ ...d, date: fmtDate(d.date) }));
 
   return (
-    <div ref={containerRef} className="w-full overflow-hidden">
-      <LineChart
-        dataset={chartData}
-        xAxis={[{ scaleType: "point" as const, dataKey: "date" }]}
-        series={[{ dataKey: "count", label: "Days", color: "#ff495c", curve: "linear" as const }]}
-        width={width}
-        height={280}
-        margin={{ top: 10, bottom: 30, left: 40, right: 10 }}
-        slotProps={{ legend: { hidden: true } as Record<string, unknown> }}
-        sx={chartSx}
-      />
-    </div>
+    <ResponsiveContainer width="100%" height={280}>
+      <LineChart data={chartData} margin={{ top: 10, bottom: 0, left: 0, right: 10 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e9e9eb" vertical={false} />
+        <XAxis dataKey="date" tick={{ fill: "#85878b", fontSize: 11 }} axisLine={{ stroke: "#e9e9eb" }} tickLine={false} />
+        <YAxis tick={{ fill: "#85878b", fontSize: 11 }} axisLine={{ stroke: "#e9e9eb" }} tickLine={false} allowDecimals={false} />
+        <Tooltip contentStyle={{ borderRadius: 6, border: "1px solid #e9e9eb", fontSize: 12 }} />
+        <Line type="linear" dataKey="count" stroke="#ff495c" strokeWidth={2} dot={{ r: 3, fill: "#ff495c" }} activeDot={{ r: 5 }} />
+      </LineChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -675,8 +644,3 @@ function fmtDate(dateStr: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-const chartSx = {
-  "& .MuiChartsAxis-left .MuiChartsAxis-tickLabelStyle": { fill: "#85878b", fontSize: "11px" },
-  "& .MuiChartsAxis-bottom .MuiChartsAxis-tickLabelStyle": { fill: "#85878b", fontSize: "11px" },
-  "& .MuiChartsAxis-root line": { stroke: "#e9e9eb" },
-};

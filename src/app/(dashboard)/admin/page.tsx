@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import NotificationBell from "@/modules/notifications/components/NotificationBell";
 import {
   Package,
@@ -67,7 +68,7 @@ export default function AdminDashboard() {
         Promise.all([
           supabase.from("packages").select("*", { count: "exact", head: true }).is("deleted_at", null).gte("checked_in_at", `${today}T00:00:00`).lte("checked_in_at", `${today}T23:59:59`),
           supabase.from("packages").select("*", { count: "exact", head: true }).is("deleted_at", null).eq("status", "checked_in"),
-          supabase.from("packages").select("*", { count: "exact", head: true }).is("deleted_at", null).neq("status", "checked_in").gte("updated_at", `${today}T00:00:00`),
+          supabase.from("packages").select("*", { count: "exact", head: true }).is("deleted_at", null).in("status", ["assigned_to_awb", "in_transit", "received_at_dest", "delivered"]).gte("updated_at", `${today}T00:00:00`),
           supabase.from("awbs").select("*", { count: "exact", head: true }).is("deleted_at", null).in("status", ["shipped", "in_transit"]),
         ]),
         // ─── Recent data: packages + activity in parallel ───
@@ -79,6 +80,10 @@ export default function AdminDashboard() {
 
       // Unpack stats
       const [rtRes, iwRes, stRes, paRes] = statsResults;
+      if (rtRes.error) logger.error("Dashboard: inbound today query failed", rtRes.error);
+      if (iwRes.error) logger.error("Dashboard: in warehouse query failed", iwRes.error);
+      if (stRes.error) logger.error("Dashboard: checked out query failed", stRes.error);
+      if (paRes.error) logger.error("Dashboard: active shipments query failed", paRes.error);
       setReceivedToday(rtRes.count || 0);
       setInWarehouse(iwRes.count || 0);
       setShippedToday(stRes.count || 0);

@@ -3,6 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createRateLimiter } from "@/shared/lib/rate-limit";
 import { checkCsrf } from "@/shared/lib/csrf";
+import { logger } from "@/shared/lib/logger";
 
 const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
 
@@ -182,7 +183,7 @@ export async function POST(req: NextRequest) {
               ban_duration: "876600h", // ~100 years = effectively permanent
             });
           } catch (authErr) {
-            console.warn(`Failed to ban auth user ${r.id}:`, authErr);
+            logger.warn(`Failed to ban auth user ${r.id}`, { error: authErr });
           }
         }
       }
@@ -208,7 +209,7 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Internal server error";
-    console.error("Admin delete error:", message);
+    logger.error("Admin delete error", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

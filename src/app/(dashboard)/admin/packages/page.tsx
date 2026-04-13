@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 import { adminDelete } from "@/lib/admin-delete";
+import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
@@ -128,6 +129,7 @@ export default function PackagesPage() {
   /* Data state */
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [serverTotal, setServerTotal] = useState(0);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [courierGroups, setCourierGroups] = useState<CourierGroup[]>([]);
   const [agentsList, setAgentsList] = useState<AgentItem[]>([]);
@@ -252,33 +254,36 @@ export default function PackagesPage() {
   /* ───────── Data loading ───────── */
   useEffect(() => {
     async function loadData() {
-      const { data: pkgData, error: pkgError } = await supabase
+      const { data: pkgData, count: pkgCount, error: pkgError } = await supabase
         .from("packages")
-        .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`)
+        .select(`*, customer:users!packages_customer_id_fkey(id, first_name, last_name, agent_id, deleted_at, agent:agents(id, name, company_name, agent_code)), courier_group:courier_groups(code, logo_url), photos:package_photos(id, storage_url, photo_type, sort_order)`, { count: "exact", head: false })
         .is("deleted_at", null)
         .order("checked_in_at", { ascending: false })
-        .limit(500);
-      if (pkgError) { table.showError("Failed to load packages"); console.error("packages query:", pkgError.message); }
-      if (pkgData) setPackages(pkgData as PackageRow[]);
+        .range(0, 999);
+      if (pkgError) { table.showError("Failed to load packages"); logger.error("packages query", pkgError); }
+      if (pkgData) {
+        setPackages(pkgData as PackageRow[]);
+        if (pkgCount != null) setServerTotal(pkgCount);
+      }
 
       const { data: custData, error: custError } = await supabase.from("users").select("id, first_name, last_name, agent_id").eq("role", "customer").is("deleted_at", null);
-      if (custError) console.error("customers query:", custError.message);
+      if (custError) logger.error("customers query", custError);
       if (custData) setCustomers(custData as Customer[]);
 
       const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, code, name, logo_url").is("deleted_at", null);
-      if (grpError) console.error("courier_groups query:", grpError.message);
+      if (grpError) logger.error("courier_groups query", grpError);
       if (grpData) setCourierGroups(grpData as CourierGroup[]);
 
       const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
-      if (agentError) console.error("agents query:", agentError.message);
+      if (agentError) logger.error("agents query", agentError);
       if (agentData) setAgentsList(agentData as AgentItem[]);
 
       const { data: statusData, error: statusError } = await supabase.from("package_statuses").select("*").is("deleted_at", null).order("sort_order");
-      if (statusError) console.error("statuses query:", statusError.message);
+      if (statusError) logger.error("statuses query", statusError);
       if (statusData) setPackageStatuses(statusData as PackageStatus[]);
 
       const { data: tagData, error: tagError } = await supabase.from("tags").select("id, name, color").is("deleted_at", null).order("name");
-      if (tagError) console.error("tags query:", tagError.message);
+      if (tagError) logger.error("tags query", tagError);
       if (tagData) setTags(tagData as TagItem[]);
 
       setLoading(false);
@@ -489,7 +494,7 @@ export default function PackagesPage() {
     try {
       // Fetch org_id dynamically from the organization
       const { data: orgRow } = await supabase.from("organizations").select("id").limit(1).single();
-      if (!orgRow) { console.error("No organization found"); return; }
+      if (!orgRow) { logger.error("No organization found"); return; }
 
       const selectedCustomer = customers.find((c) => c.id === formData.customer_id);
       const newPackage = {
@@ -527,7 +532,7 @@ export default function PackagesPage() {
                 ? `${result.customer.first_name} ${result.customer.last_name}`
                 : "",
             });
-          }).catch(console.error);
+          }).catch(err => logger.error("Error in package creation notification", err));
         }
 
         // Auto-print label on check-in (if enabled in settings)
@@ -555,7 +560,7 @@ export default function PackagesPage() {
             } : null,
           });
         } catch (err) {
-          console.error("Auto-print error:", err);
+          logger.error("Auto-print error", err);
         }
       }
     } finally { setCreating(false); }
@@ -722,7 +727,7 @@ export default function PackagesPage() {
     try {
       // Fetch org_id dynamically from the organization
       const { data: orgRow } = await supabase.from("organizations").select("id").limit(1).single();
-      if (!orgRow) { console.error("No organization found"); return; }
+      if (!orgRow) { logger.error("No organization found"); return; }
 
       const { data: newAwb, error: createErr } = await supabase
         .from("awbs")
@@ -738,7 +743,7 @@ export default function PackagesPage() {
         .single();
 
       if (createErr || !newAwb) {
-        console.error("Error creating shipment:", createErr);
+        logger.error("Error creating shipment", createErr);
         return;
       }
 
@@ -1500,6 +1505,13 @@ export default function PackagesPage() {
 
       {/* ════════ Main Content ════════ */}
       <div className="flex-1 flex flex-col min-h-0 p-4">
+        {/* Truncation Warning Banner */}
+        {serverTotal > packages.length && (
+          <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mx-6 mb-2 flex items-center gap-2 text-meta text-amber-700">
+            <AlertTriangle size={14} />
+            Showing {packages.length.toLocaleString()} of {serverTotal.toLocaleString()} records. Use filters to narrow results.
+          </div>
+        )}
         {/* ════════ Table Container — bordered card ════════ */}
         <div className="sheet-table-wrap">
           {/* Scrollable table — ONLY this scrolls */}

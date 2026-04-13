@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Plus, X, Check, Trash2, Loader2, CircleDot, GripVertical } from "lucide-react";
 
@@ -79,7 +80,7 @@ export default function StatusSettings() {
           .order("sort_order");
         if (statusesData) setStatuses(statusesData);
       } catch (error) {
-        console.error("Error loading statuses:", error);
+        logger.error("Error loading statuses", error);
         showError("Failed to load statuses");
       } finally {
         setLoading(false);
@@ -108,7 +109,7 @@ export default function StatusSettings() {
         showSuccess("Status added");
       }
     } catch (error) {
-      console.error("Error adding status:", error);
+      logger.error("Error adding status", error);
       showError("Failed to add status");
     }
   };
@@ -124,7 +125,7 @@ export default function StatusSettings() {
         showError("Failed to delete status: " + error.message);
       }
     } catch (error) {
-      console.error("Error deleting status:", error);
+      logger.error("Error deleting status", error);
       showError("Failed to delete status");
     }
   };
@@ -154,7 +155,7 @@ export default function StatusSettings() {
         showSuccess("Status renamed");
       }
     } catch (error) {
-      console.error("Error renaming status:", error);
+      logger.error("Error renaming status", error);
       showError("Failed to rename status");
     } finally {
       setEditingStatusId(null);
@@ -203,7 +204,7 @@ export default function StatusSettings() {
       );
       showSuccess("Status order updated");
     } catch (error) {
-      console.error("Error saving status order:", error);
+      logger.error("Error saving status order", error);
       showError("Failed to save status order");
     }
   };

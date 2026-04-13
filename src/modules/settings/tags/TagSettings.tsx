@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Plus, X, Check, Pencil, Trash2, Loader2 } from "lucide-react";
 
@@ -74,7 +75,7 @@ export default function TagSettings() {
           .is("deleted_at", null);
         if (tagsData) setTags(tagsData);
       } catch (error) {
-        console.error("Error loading tags:", error);
+        logger.error("Error loading tags", error);
         showError("Failed to load tags");
       } finally {
         setLoading(false);
@@ -99,7 +100,7 @@ export default function TagSettings() {
         showSuccess("Tag added");
       }
     } catch (error) {
-      console.error("Error adding tag:", error);
+      logger.error("Error adding tag", error);
       showError("Failed to add tag");
     }
   };
@@ -122,7 +123,7 @@ export default function TagSettings() {
         showError("Failed to update tag: " + error.message);
       }
     } catch (error) {
-      console.error("Error updating tag:", error);
+      logger.error("Error updating tag", error);
       showError("Failed to update tag");
     }
   };
@@ -141,7 +142,7 @@ export default function TagSettings() {
         showError("Failed to delete tag: " + error.message);
       }
     } catch (error) {
-      console.error("Error deleting tag:", error);
+      logger.error("Error deleting tag", error);
       showError("Failed to delete tag");
     }
   };

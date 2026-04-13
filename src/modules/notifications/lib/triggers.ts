@@ -6,6 +6,7 @@
  */
 
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import type { NotificationType } from "../types";
 
 /* Map org settings keys to notification_type enum values */
@@ -77,7 +78,7 @@ export async function createNotification(opts: {
 
     await supabase.from("notifications").insert(rows);
   } catch (err) {
-    console.error("Failed to create notification:", err);
+    logger.error("Failed to create notification", err);
   }
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { logger } from "@/shared/lib/logger";
 
 export default function DashboardError({
   error,
@@ -10,8 +11,7 @@ export default function DashboardError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO: Replace with Sentry or error logging service (AU-6)
-    console.error("Dashboard error:", error);
+    logger.error("Dashboard error", error);
   }, [error]);
 
   return (

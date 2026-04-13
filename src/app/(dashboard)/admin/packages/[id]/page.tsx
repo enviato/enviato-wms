@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import {
   ArrowLeft,
   Package,
@@ -172,7 +173,7 @@ export default function PackageDetailsPage() {
 
       if (freshActivity) setActivityLog(freshActivity as ActivityLog[]);
     } catch (err) {
-      console.error("Error logging activity:", err);
+      logger.error("Error logging activity", err);
     }
   }, [pkg, packageId, currentUserId]);
 
@@ -253,7 +254,7 @@ export default function PackageDetailsPage() {
 
       setLoading(false);
     } catch (err) {
-      console.error("Error loading package:", err);
+      logger.error("Error loading package", err);
       setNotFound(true);
       setLoading(false);
     }
@@ -320,7 +321,7 @@ export default function PackageDetailsPage() {
         { field, value }
       );
     } catch (err) {
-      console.error("Error saving field:", err);
+      logger.error("Error saving field", err);
     } finally {
       setSaving(false);
     }
@@ -354,7 +355,7 @@ export default function PackageDetailsPage() {
 
       if (customers) setCustomerOptions(customers as CustomerOption[]);
     } catch (err) {
-      console.error("Error searching customers:", err);
+      logger.error("Error searching customers", err);
     } finally {
       setLoadingCustomers(false);
     }
@@ -399,7 +400,7 @@ export default function PackageDetailsPage() {
         );
       }
     } catch (err) {
-      console.error("Error reassigning customer:", err);
+      logger.error("Error reassigning customer", err);
     }
   };
 
@@ -464,7 +465,7 @@ export default function PackageDetailsPage() {
         const file = files[i];
 
         if (isHeicFile(file)) {
-          console.warn(`Rejected HEIC file: ${file.name}`);
+          logger.warn(`Rejected HEIC file: ${file.name}`);
           heicRejected++;
           continue;
         }
@@ -498,7 +499,7 @@ export default function PackageDetailsPage() {
           newPhotos.push(photo as PhotoRecord);
           await logActivity("photo_added", "Added a package photo", { url });
         } catch (err) {
-          console.error(`Error uploading photo ${file.name}:`, err);
+          logger.error(`Error uploading photo ${file.name}`, err);
           failures++;
         }
       }
@@ -560,7 +561,7 @@ export default function PackageDetailsPage() {
 
       await logActivity("photo_deleted", "Removed a package photo");
     } catch (err) {
-      console.error("Error deleting photo:", err);
+      logger.error("Error deleting photo", err);
       setErrorMessage(err instanceof Error ? err.message : "Failed to delete photo");
       setTimeout(() => setErrorMessage(""), 4000);
     } finally {
@@ -588,7 +589,7 @@ export default function PackageDetailsPage() {
         await logActivity("tag_added", `Added tag: ${tag.name}`);
       }
     } catch (err) {
-      console.error("Error adding tag:", err);
+      logger.error("Error adding tag", err);
     }
   };
 
@@ -609,7 +610,7 @@ export default function PackageDetailsPage() {
         await logActivity("tag_removed", `Removed tag: ${tag.name}`);
       }
     } catch (err) {
-      console.error("Error removing tag:", err);
+      logger.error("Error removing tag", err);
     }
   };
 
@@ -631,7 +632,7 @@ export default function PackageDetailsPage() {
       setAvailableTags([...availableTags, newTag as TagDefinition]);
       await addTagToPackage(newTag.id);
     } catch (err) {
-      console.error("Error creating tag:", err);
+      logger.error("Error creating tag", err);
     }
   };
 
@@ -650,7 +651,7 @@ export default function PackageDetailsPage() {
       await logActivity("deleted", "Package deleted");
       router.push("/admin/packages");
     } catch (err) {
-      console.error("Error deleting package:", err);
+      logger.error("Error deleting package", err);
     } finally {
       setDeleting(false);
     }
@@ -674,7 +675,7 @@ export default function PackageDetailsPage() {
 
       await logActivity("checked_out", "Package checked out to AWB");
     } catch (err) {
-      console.error("Error checking out package:", err);
+      logger.error("Error checking out package", err);
     } finally {
       setCheckingOut(false);
     }

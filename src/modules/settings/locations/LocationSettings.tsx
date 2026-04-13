@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import { createClient } from "@/lib/supabase";
 import {
@@ -98,7 +99,7 @@ export default function LocationSettings() {
           .select("id, first_name, last_name");
         if (customersData) setCustomers(customersData);
       } catch (error) {
-        console.error("Error loading location settings:", error);
+        logger.error("Error loading location settings:", error);
         showError("Failed to load locations");
       } finally {
         setLoading(false);
@@ -136,7 +137,7 @@ export default function LocationSettings() {
         showError("Failed to add location: " + error.message);
       }
     } catch (error) {
-      console.error("Error adding location:", error);
+      logger.error("Error adding location:", error);
       showError("Failed to add location");
     }
   };
@@ -171,7 +172,7 @@ export default function LocationSettings() {
         showError("Failed to update location: " + error.message);
       }
     } catch (error) {
-      console.error("Error updating location:", error);
+      logger.error("Error updating location:", error);
       showError("Failed to update location");
     }
   };
@@ -197,7 +198,7 @@ export default function LocationSettings() {
         showError("Failed to delete location: " + error.message);
       }
     } catch (error) {
-      console.error("Error deleting location:", error);
+      logger.error("Error deleting location:", error);
       showError("Failed to delete location");
       setDeletingLocationId(null);
     }
@@ -224,7 +225,7 @@ export default function LocationSettings() {
         showError("Failed to update status: " + error.message);
       }
     } catch (error) {
-      console.error("Error toggling location status:", error);
+      logger.error("Error toggling location status:", error);
       showError("Failed to update status");
     }
   };
@@ -295,7 +296,7 @@ export default function LocationSettings() {
 
       setSelectedLocationIds(new Set());
     } catch (error) {
-      console.error("Error in batch location action:", error);
+      logger.error("Error in batch location action:", error);
       showError("Failed to complete batch action");
     } finally {
       setBatchLocationActionLoading(false);

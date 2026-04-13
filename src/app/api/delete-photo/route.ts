@@ -3,6 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createRateLimiter } from "@/shared/lib/rate-limit";
 import { checkCsrf } from "@/shared/lib/csrf";
+import { logger } from "@/shared/lib/logger";
 
 const BUCKET = "package-photos";
 const limiter = createRateLimiter({ windowMs: 60_000, max: 20 });
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
         .remove([public_id]);
 
       if (deleteError) {
-        console.warn("Storage delete warning:", deleteError.message);
+        logger.warn("Storage delete warning", { message: deleteError.message });
         // Don't fail the request — the DB record will still be cleaned up by the caller
       }
     }
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Delete failed";
-    console.error("Photo delete error:", message);
+    logger.error("Photo delete error", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

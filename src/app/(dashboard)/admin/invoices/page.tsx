@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import { adminDelete } from "@/lib/admin-delete";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
@@ -142,6 +143,7 @@ export default function InvoicesPage() {
   /* Data state */
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [serverTotal, setServerTotal] = useState(0);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [courierGroups, setCourierGroups] = useState<CourierGroup[]>([]);
   const [billingAgents, setBillingAgents] = useState<BillingAgent[]>([]);
@@ -273,13 +275,16 @@ export default function InvoicesPage() {
   /* ───────── Data loading ───────── */
   useEffect(() => {
     async function loadData() {
-      const { data: invData } = await supabase
+      const { data: invData, count: invCount } = await supabase
         .from("invoices")
-        .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages(awb:awbs(awb_number))`)
+        .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages(awb:awbs(awb_number))`, { count: "exact", head: false })
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
-        .limit(500);
-      if (invData) setInvoices(invData as InvoiceRow[]);
+        .range(0, 999);
+      if (invData) {
+        setInvoices(invData as InvoiceRow[]);
+        if (invCount != null) setServerTotal(invCount);
+      }
 
       const { data: custData } = await supabase.from("users").select("id, first_name, last_name").eq("role", "customer");
       if (custData) setCustomers(custData as Customer[]);
@@ -382,7 +387,7 @@ export default function InvoicesPage() {
         .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages(awb:awbs(awb_number))`)
         .single();
 
-      if (error) { console.error("Error creating invoice:", error); table.showError("Error creating invoice"); return; }
+      if (error) { logger.error("Error creating invoice", error); table.showError("Error creating invoice"); return; }
       if (data) {
         setInvoices((prev) => [data as InvoiceRow, ...prev]);
         setShowCreateModal(false);
@@ -442,18 +447,31 @@ export default function InvoicesPage() {
       )}
 
       {/* Create Invoice Modal */}
-      {showCreateModal && (
+      {showCreateModal && (() => {
+        const subtotalNum = parseFloat(formData.subtotal) || 0;
+        const taxRateNum = parseFloat(formData.tax_rate) || 0;
+        const taxAmount = subtotalNum * (taxRateNum / 100);
+        const totalAmount = subtotalNum + taxAmount;
+        const canSubmit = !!formData.customer_id && !!formData.billed_by_agent_id && subtotalNum > 0 && parseFloat(formData.rate_per_lb) > 0;
+
+        return (
         <div className="modal-overlay z-50 flex items-center justify-center p-4">
-          <div className="modal-panel max-w-lg w-full max-h-[90vh] overflow-y-auto space-y-4">
+          <div className="modal-panel max-w-lg w-full max-h-[90vh] overflow-y-auto space-y-5">
             <div className="flex items-center justify-between">
-              <h3 className="text-ui font-semibold text-txt-primary">Create invoice</h3>
+              <div>
+                <h3 className="text-ui font-semibold text-txt-primary">Create Invoice</h3>
+                <p className="text-meta text-txt-placeholder mt-0.5">{formData.invoice_number}</p>
+              </div>
               <button onClick={() => setShowCreateModal(false)} className="p-1 text-txt-tertiary hover:text-txt-primary transition-colors cursor-pointer">
                 <X size={18} />
               </button>
             </div>
-            <div className="space-y-4">
+
+            {/* ─── Parties ─── */}
+            <div className="space-y-3">
+              <p className="text-meta font-medium text-txt-secondary tracking-tight uppercase">Parties</p>
               <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Customer</label>
+                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Customer <span className="text-red-400">*</span></label>
                 <SearchableSelect
                   value={formData.customer_id}
                   onChange={(v) => setFormData((prev) => ({ ...prev, customer_id: v }))}
@@ -463,7 +481,7 @@ export default function InvoicesPage() {
                 />
               </div>
               <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Bill From (Agent)</label>
+                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Bill From (Agent) <span className="text-red-400">*</span></label>
                 <SearchableSelect
                   value={formData.billed_by_agent_id}
                   onChange={(v) => setFormData((prev) => ({ ...prev, billed_by_agent_id: v }))}
@@ -480,50 +498,81 @@ export default function InvoicesPage() {
                   ) : null;
                 })()}
               </div>
-              <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Invoice Number</label>
-                <input type="text" name="invoice_number" value={formData.invoice_number} onChange={handleInputChange} readOnly className="form-input bg-surface-secondary opacity-70" />
+            </div>
+
+            {/* ─── Pricing ─── */}
+            <div className="space-y-3 pt-1 border-t border-border">
+              <p className="text-meta font-medium text-txt-secondary tracking-tight uppercase pt-2">Pricing</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Pricing Model</label>
+                  <SearchableSelect
+                    value={formData.pricing_model}
+                    onChange={(v) => setFormData((prev) => ({ ...prev, pricing_model: v }))}
+                    searchable={false}
+                    options={[{ value: "gross_weight", label: "Gross Weight" }, { value: "volume_weight", label: "Volume Weight" }]}
+                  />
+                </div>
+                <div>
+                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Rate per Lb <span className="text-red-400">*</span></label>
+                  <input type="number" name="rate_per_lb" value={formData.rate_per_lb} onChange={handleInputChange} required step="0.01" min="0" className="form-input" placeholder="0.00" />
+                </div>
               </div>
-              <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Pricing Model</label>
-                <SearchableSelect
-                  value={formData.pricing_model}
-                  onChange={(v) => setFormData((prev) => ({ ...prev, pricing_model: v }))}
-                  searchable={false}
-                  options={[{ value: "gross_weight", label: "Gross Weight" }, { value: "volume_weight", label: "Volume Weight" }]}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Subtotal <span className="text-red-400">*</span></label>
+                  <input type="number" name="subtotal" value={formData.subtotal} onChange={handleInputChange} required step="0.01" min="0" className="form-input" placeholder="0.00" />
+                </div>
+                <div>
+                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Tax Rate (%)</label>
+                  <input type="number" name="tax_rate" value={formData.tax_rate} onChange={handleInputChange} step="0.01" min="0" className="form-input" placeholder="0" />
+                </div>
               </div>
-              <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Rate per Lb</label>
-                <input type="number" name="rate_per_lb" value={formData.rate_per_lb} onChange={handleInputChange} required step="0.01" min="0" className="form-input" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Subtotal</label>
-                <input type="number" name="subtotal" value={formData.subtotal} onChange={handleInputChange} required step="0.01" min="0" className="form-input" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Tax Rate (%)</label>
-                <input type="number" name="tax_rate" value={formData.tax_rate} onChange={handleInputChange} step="0.01" min="0" className="form-input" placeholder="0" />
-              </div>
+              {/* ─── Live Total Preview ─── */}
+              {subtotalNum > 0 && (
+                <div className="bg-surface-secondary rounded-md p-3 space-y-1.5">
+                  <div className="flex justify-between text-meta text-txt-tertiary">
+                    <span>Subtotal</span>
+                    <span>${subtotalNum.toFixed(2)}</span>
+                  </div>
+                  {taxAmount > 0 && (
+                    <div className="flex justify-between text-meta text-txt-tertiary">
+                      <span>Tax ({taxRateNum}%)</span>
+                      <span>${taxAmount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-ui font-semibold text-txt-primary border-t border-border pt-1.5">
+                    <span>Total</span>
+                    <span>${totalAmount.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ─── Details ─── */}
+            <div className="space-y-3 pt-1 border-t border-border">
+              <p className="text-meta font-medium text-txt-secondary tracking-tight uppercase pt-2">Details</p>
               <div>
                 <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Due Date</label>
                 <input type="date" name="due_date" value={formData.due_date} onChange={handleInputChange} className="form-input" />
               </div>
               <div>
                 <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Notes</label>
-                <textarea name="notes" value={formData.notes} onChange={handleInputChange} className="form-input resize-none" placeholder="Add any additional notes..." rows={3} />
+                <textarea name="notes" value={formData.notes} onChange={handleInputChange} className="form-input resize-none" placeholder="Add any additional notes..." rows={2} />
               </div>
             </div>
+
             <div className="flex justify-end gap-2 pt-4 border-t border-border">
               <button onClick={() => setShowCreateModal(false)} className="btn-secondary cursor-pointer">Cancel</button>
-              <button onClick={handleCreateInvoice} disabled={isSubmitting || !formData.customer_id || !formData.billed_by_agent_id || !formData.rate_per_lb || !formData.subtotal} className="btn-primary flex items-center gap-2 cursor-pointer">
+              <button onClick={handleCreateInvoice} disabled={isSubmitting || !canSubmit} className="btn-primary flex items-center gap-2 cursor-pointer">
                 {isSubmitting && <Loader2 size={14} className="animate-spin" />}
-                Create invoice
+                Create Invoice — ${totalAmount.toFixed(2)}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* View Invoice Modal */}
       {viewInvoice && (
@@ -715,6 +764,14 @@ export default function InvoicesPage() {
             </button>
           )}
         </div>
+
+        {/* Truncation Warning Banner */}
+        {serverTotal > invoices.length && (
+          <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-2 flex items-center gap-2 text-meta text-amber-700">
+            <AlertTriangle size={14} />
+            Showing {invoices.length.toLocaleString()} of {serverTotal.toLocaleString()} records. Use filters to narrow results.
+          </div>
+        )}
 
         {/* ════════ Spreadsheet Table Container ════════ */}
         <div className="sheet-table-wrap">

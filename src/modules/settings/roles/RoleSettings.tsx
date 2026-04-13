@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import {
   Plus,
@@ -124,7 +125,7 @@ export default function RoleSettings() {
           .order("name");
         if (rolesData) setCustomRoles(rolesData);
       } catch (error) {
-        console.error("Error loading role data:", error);
+        logger.error("Error loading role data", error);
         showError("Failed to load role data");
       } finally {
         setLoading(false);
@@ -149,7 +150,7 @@ export default function RoleSettings() {
       });
       setEditingRolePerms(permMap);
     } catch (error) {
-      console.error("Error loading role permissions:", error);
+      logger.error("Error loading role permissions", error);
       showError("Failed to load role permissions");
     }
   };
@@ -191,7 +192,7 @@ export default function RoleSettings() {
         showSuccess("Role created — now configure permissions");
       }
     } catch (error) {
-      console.error("Error creating role:", error);
+      logger.error("Error creating role", error);
       showError("Failed to create role");
     } finally {
       setSavingRole(false);
@@ -217,7 +218,7 @@ export default function RoleSettings() {
       setSelectedRolePerms(grantedKeys);
       showSuccess("Role permissions saved");
     } catch (error) {
-      console.error("Error saving role permissions:", error);
+      logger.error("Error saving role permissions", error);
       showError("Failed to save permissions");
     } finally {
       setSavingRole(false);
@@ -245,7 +246,7 @@ export default function RoleSettings() {
       }
       showSuccess("Role deleted");
     } catch (error) {
-      console.error("Error deleting role:", error);
+      logger.error("Error deleting role", error);
       showError("Failed to delete role");
     }
   };

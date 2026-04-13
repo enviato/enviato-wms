@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { logger } from "@/shared/lib/logger";
 import { createClient } from "@/lib/supabase";
 import SearchableSelect from "@/components/SearchableSelect";
 import {
@@ -151,7 +152,7 @@ export default function UserSettings() {
         const { data: rolesData } = await supabase.from("roles").select("*").order("is_system", { ascending: false }).order("name");
         if (rolesData) setCustomRoles(rolesData);
       } catch (error) {
-        console.error("Error loading user settings data:", error);
+        logger.error("Error loading user settings data:", error);
         showError("Failed to load users");
       } finally {
         setLoading(false);
@@ -249,7 +250,7 @@ export default function UserSettings() {
       if (data) setUsers(data);
       showSuccess("Invite email sent");
     } catch (error) {
-      console.error("Error inviting user:", error);
+      logger.error("Error inviting user:", error);
       setInviteError("An unexpected error occurred. Please try again.");
     } finally {
       setInviting(false);
@@ -283,7 +284,7 @@ export default function UserSettings() {
         showError(result.error || "Failed to resend invite");
       }
     } catch (error) {
-      console.error("Error resending invite:", error);
+      logger.error("Error resending invite:", error);
       showError("Failed to resend invite");
     } finally {
       setResendingInvite(false);
@@ -306,7 +307,7 @@ export default function UserSettings() {
         showError("Failed to update user status");
       }
     } catch (error) {
-      console.error("Error toggling user status:", error);
+      logger.error("Error toggling user status:", error);
       showError("Failed to update user status");
     }
   };
@@ -331,7 +332,7 @@ export default function UserSettings() {
         showError(result.failed?.[0]?.message || result.error || "Failed to delete user");
       }
     } catch (error) {
-      console.error("Error deleting user:", error);
+      logger.error("Error deleting user:", error);
       showError("Failed to delete user");
     } finally {
       setDeletingUser(false);
@@ -400,7 +401,7 @@ export default function UserSettings() {
       closeUserEditor();
       showSuccess("User updated");
     } catch (error) {
-      console.error("Error saving user:", error);
+      logger.error("Error saving user:", error);
       showError("Failed to save user");
     } finally {
       setSavingUser(false);
@@ -471,7 +472,7 @@ export default function UserSettings() {
       setSelectedUserIds(new Set());
       setShowBatchUserAction(false);
     } catch (error) {
-      console.error("Error in batch user action:", error);
+      logger.error("Error in batch user action:", error);
       showError("Failed to complete batch action");
     } finally {
       setBatchUserActionLoading(false);

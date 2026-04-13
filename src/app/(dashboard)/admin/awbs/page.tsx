@@ -9,6 +9,7 @@ import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
 import BatchBar from "@/shared/components/DataTable/BatchBar";
 import type { ColumnDef } from "@/shared/types/common";
+import { logger } from "@/shared/lib/logger";
 import ColumnHeaderMenu from "@/components/ColumnHeaderMenu";
 import NotificationBell from "@/modules/notifications/components/NotificationBell";
 import {
@@ -115,6 +116,7 @@ export default function AwbsPage() {
   /* Data state */
   const [awbs, setAwbs] = useState<AwbRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [serverTotal, setServerTotal] = useState(0);
   const [courierGroups, setCourierGroups] = useState<{ id: string; name: string; code: string }[]>([]);
   const [agentsList, setAgentsList] = useState<{ id: string; name: string; company_name: string | null; agent_code: string | null }[]>([]);
 
@@ -183,17 +185,19 @@ export default function AwbsPage() {
   /* ───────── Data loading ───────── */
   useEffect(() => {
     async function loadData() {
-      const { data: awbData, error: awbError } = await supabase
+      const { data: awbData, count: awbCount, error: awbError } = await supabase
         .from("awbs")
-        .select(`*, courier_group:courier_groups(code, name, logo_url)`)
+        .select(`*, courier_group:courier_groups(code, name, logo_url)`, { count: "exact", head: false })
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
-        .limit(500);
+        .range(0, 999);
 
       if (awbError) {
-        console.error("awbs query:", awbError.message);
+        logger.error("awbs query", awbError);
         table.showError("Failed to load shipments");
       }
+
+      if (awbCount != null) setServerTotal(awbCount);
 
       /* Fetch package stats per AWB (customer count, package count, billable weight) */
       const { data: pkgData, error: pkgError } = await supabase
@@ -203,7 +207,7 @@ export default function AwbsPage() {
         .not("awb_id", "is", null);
 
       if (pkgError) {
-        console.error("packages query:", pkgError.message);
+        logger.error("packages query", pkgError);
       }
 
       if (awbData) {
@@ -236,13 +240,13 @@ export default function AwbsPage() {
 
       const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, name, code, logo_url").is("deleted_at", null);
       if (grpError) {
-        console.error("courier_groups query:", grpError.message);
+        logger.error("courier_groups query", grpError);
       }
       if (grpData) setCourierGroups(grpData as { id: string; name: string; code: string; logo_url?: string | null }[]);
 
       const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentError) {
-        console.error("agents query:", agentError.message);
+        logger.error("agents query", agentError);
       }
       if (agentData) setAgentsList(agentData as { id: string; name: string; company_name: string | null; agent_code: string | null }[]);
 
@@ -376,7 +380,7 @@ export default function AwbsPage() {
     try {
       // Fetch org_id for the current organization
       const { data: orgRow } = await supabase.from("organizations").select("id").limit(1).single();
-      if (!orgRow) { console.error("No organization found"); return; }
+      if (!orgRow) { logger.error("No organization found"); return; }
 
       const newAwb = {
         org_id: orgRow.id,
@@ -395,7 +399,7 @@ export default function AwbsPage() {
         .select(`*, courier_group:courier_groups(code, name, logo_url)`)
         .single();
       if (error) {
-        console.error("Error creating shipment:", error);
+        logger.error("Error creating shipment", error);
         return;
       }
       if (result) {
@@ -791,6 +795,14 @@ export default function AwbsPage() {
       </div>
 
       <div className="px-4 py-4 flex-1 flex flex-col min-h-0 overflow-hidden">
+
+        {/* Truncation Warning Banner */}
+        {serverTotal > awbs.length && (
+          <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-2 flex items-center gap-2 text-meta text-amber-700">
+            <AlertTriangle size={14} />
+            Showing {awbs.length.toLocaleString()} of {serverTotal.toLocaleString()} records. Use filters to narrow results.
+          </div>
+        )}
 
         {/* ════════ Spreadsheet Table Container ════════ */}
         <div className="flex-1 flex flex-col min-h-0 sheet-table-wrap">

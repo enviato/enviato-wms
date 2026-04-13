@@ -3,6 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createRateLimiter } from "@/shared/lib/rate-limit";
 import { checkCsrf } from "@/shared/lib/csrf";
+import { logger } from "@/shared/lib/logger";
 
 const limiter = createRateLimiter({ windowMs: 60_000, max: 20 });
 
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
       .eq("id", userId);
 
     if (restoreError) {
-      console.error("Failed to restore user row:", restoreError);
+      logger.error("Failed to restore user row", restoreError);
       return NextResponse.json({ error: restoreError.message }, { status: 500 });
     }
 
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (error) {
-      console.error("Failed to unban auth user:", error);
+      logger.error("Failed to unban auth user", error);
       return NextResponse.json(
         { error: error.message },
         { status: 500 }
@@ -98,7 +99,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal server error";
-    console.error("Restore user error:", message);
+    logger.error("Restore user error", err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

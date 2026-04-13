@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { logger } from "@/shared/lib/logger";
 import { createClient } from "@/lib/supabase";
 import { Truck, Plus, Pencil, Trash2, ImagePlus, X, Check, AlertTriangle, Loader2 } from "lucide-react";
 
@@ -71,7 +72,7 @@ export default function CourierSettings() {
           setCouriers(couriersData);
         }
       } catch (error) {
-        console.error("Error loading couriers:", error);
+        logger.error("Error loading couriers:", error);
         showError("Failed to load couriers");
       } finally {
         setLoading(false);
@@ -99,11 +100,11 @@ export default function CourierSettings() {
         if (data) setCouriers(data);
         showSuccess("Courier company added");
       } else {
-        console.error("Error adding courier:", error);
+        logger.error("Error adding courier:", error);
         showError("Failed to add courier: " + error.message);
       }
     } catch (error) {
-      console.error("Error adding courier:", error);
+      logger.error("Error adding courier:", error);
       showError("Failed to add courier");
     }
   };
@@ -134,11 +135,11 @@ export default function CourierSettings() {
 
       if (error) {
         // If logo_url column doesn't exist, retry without it
-        console.warn("Update with logo_url failed, retrying without:", error.message);
+        logger.warn("Update with logo_url failed, retrying without:");
         const { error: retryError } = await supabase.from("courier_groups").update(updatePayload).eq("id", editCourier.id);
         if (retryError) {
           showError("Failed to update courier");
-          console.error("Error updating courier:", retryError);
+          logger.error("Error updating courier:", retryError);
           return;
         }
       }
@@ -150,7 +151,7 @@ export default function CourierSettings() {
       showSuccess("Courier company updated");
     } catch (error) {
       showError("Failed to update courier");
-      console.error("Error updating courier:", error);
+      logger.error("Error updating courier:", error);
     }
   };
 
@@ -162,7 +163,7 @@ export default function CourierSettings() {
       const filePath = `courier-logos/${editCourier.id}.${ext}`;
       const { error: uploadError } = await supabase.storage.from("assets").upload(filePath, file, { upsert: true });
       if (uploadError) {
-        console.error("Logo upload error:", uploadError);
+        logger.error("Logo upload error:", uploadError);
         showError("Failed to upload logo: " + uploadError.message);
         return;
       }
@@ -171,7 +172,7 @@ export default function CourierSettings() {
       setEditCourierLogo(logoUrl);
       showSuccess("Logo uploaded — click Save to apply");
     } catch (error) {
-      console.error("Logo upload exception:", error);
+      logger.error("Logo upload exception:", error);
       showError("Failed to upload logo");
     }
   };
@@ -187,7 +188,7 @@ export default function CourierSettings() {
       // Soft-delete the courier
       const { error } = await supabase.from("courier_groups").update({ deleted_at: new Date().toISOString(), deleted_by: currentUserId }).eq("id", id);
       if (error) {
-        console.error("Delete courier error:", error);
+        logger.error("Delete courier error:", error);
         showError("Failed to delete: " + error.message);
         setDeletingCourierId(null);
         return;
@@ -205,7 +206,7 @@ export default function CourierSettings() {
       setCouriers(couriers.filter((c) => c.id !== id));
       showSuccess("Courier company deleted");
     } catch (error) {
-      console.error("Error deleting courier:", error);
+      logger.error("Error deleting courier:", error);
       showError("Failed to delete courier");
       setDeletingCourierId(null);
     }

@@ -9,6 +9,7 @@
  */
 
 import { createClient } from "@/lib/supabase";
+import { logger } from "@/shared/lib/logger";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -368,13 +369,13 @@ export async function autoPrintLabel(pkg: PackageData): Promise<void> {
 
     const result = await buildLabelHtml(pkg);
     if (!result) {
-      console.warn("Auto-print: no label template configured");
+      logger.warn("Auto-print: no label template configured");
       return;
     }
 
     const { printLabelHtml } = await import("@/lib/print-pdf");
     await printLabelHtml(result.labelHtml, result.widthInches, result.heightInches);
   } catch (err) {
-    console.error("Auto-print label error:", err);
+    logger.error("Auto-print label error", err);
   }
 }
