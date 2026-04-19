@@ -24,7 +24,10 @@ const CASCADE_MAP: Record<
   string,
   { table: string; fk: string; action: "delete" | "nullify" }[]
 > = {
-  invoices: [{ table: "invoice_lines", fk: "invoice_id", action: "delete" }],
+  invoices: [
+    { table: "invoice_lines", fk: "invoice_id", action: "delete" },
+    { table: "packages", fk: "invoice_id", action: "nullify" },
+  ],
   awbs: [{ table: "packages", fk: "awb_id", action: "nullify" }],
 };
 

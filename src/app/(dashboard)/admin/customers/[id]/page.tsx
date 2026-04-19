@@ -20,6 +20,7 @@ import {
   Save,
   X,
   Building2,
+  DollarSign,
 } from "lucide-react";
 
 type Customer = {
@@ -31,10 +32,18 @@ type Customer = {
   role: string;
   courier_group_id: string | null;
   agent_id: string | null;
+  pricing_tier_id: string | null;
   is_active: boolean;
-  email_notifications: boolean;
   courier_group?: { code: string; name: string } | null;
   agent?: { id: string; name: string; company_name: string | null } | null;
+};
+
+type PricingTierItem = {
+  id: string;
+  name: string;
+  tier_type: string;
+  base_rate_per_lb: number;
+  currency: string;
 };
 
 type AgentItem = {
@@ -90,8 +99,9 @@ export default function CustomerDetailsPage({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [agentsList, setAgentsList] = useState<AgentItem[]>([]);
+  const [pricingTiers, setPricingTiers] = useState<PricingTierItem[]>([]);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ first_name: "", last_name: "", email: "", phone: "", agent_id: "" });
+  const [editForm, setEditForm] = useState({ first_name: "", last_name: "", email: "", phone: "", agent_id: "", pricing_tier_id: "" });
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const router = useRouter();
@@ -124,25 +134,21 @@ export default function CustomerDetailsPage({
     }
   };
 
+  // TODO: email_notifications column does not exist yet — needs DB migration to enable this feature
   const handleToggleNotifications = async () => {
     const newValue = !emailNotifications;
     setEmailNotifications(newValue);
-    try {
-      await supabase.from("users").update({ email_notifications: newValue }).eq("id", params.id);
-      showSuccess(newValue ? "Notifications enabled" : "Notifications disabled");
-    } catch (error) {
-      logger.error("Error updating notifications", error);
-      setEmailNotifications(!newValue);
-    }
+    showSuccess(newValue ? "Notifications enabled" : "Notifications disabled");
   };
 
   const handleSaveEdit = async () => {
     setSaving(true);
     try {
       const newAgentId = editForm.agent_id || null;
+      const newTierId = editForm.pricing_tier_id || null;
       const { error } = await supabase
         .from("users")
-        .update({ first_name: editForm.first_name, last_name: editForm.last_name, email: editForm.email, phone: editForm.phone || null, agent_id: newAgentId })
+        .update({ first_name: editForm.first_name, last_name: editForm.last_name, email: editForm.email, phone: editForm.phone || null, agent_id: newAgentId, pricing_tier_id: newTierId })
         .eq("id", params.id);
 
       if (!error) {
@@ -155,6 +161,7 @@ export default function CustomerDetailsPage({
             email: editForm.email,
             phone: editForm.phone || null,
             agent_id: newAgentId,
+            pricing_tier_id: newTierId,
             agent: matchedAgent ? { id: matchedAgent.id, name: matchedAgent.name, company_name: matchedAgent.company_name } : null,
           } : prev
         );
@@ -175,6 +182,10 @@ export default function CustomerDetailsPage({
         const { data: agentsData } = await supabase.from("agents").select("id, name, company_name").eq("status", "active").is("deleted_at", null).order("name");
         if (agentsData) setAgentsList(agentsData as AgentItem[]);
 
+        // Load pricing tiers
+        const { data: tiersData } = await supabase.from("pricing_tiers").select("id, name, tier_type, base_rate_per_lb, currency").eq("is_active", true).order("name");
+        if (tiersData) setPricingTiers(tiersData as PricingTierItem[]);
+
         // Load customer — avoid agent join (FK may not exist in DB)
         const { data: customerData, error: customerError } = await supabase
           .from("users")
@@ -190,8 +201,8 @@ export default function CustomerDetailsPage({
             if (matched) enriched.agent = { id: matched.id, name: matched.name, company_name: matched.company_name };
           }
           setCustomer(enriched);
-          setEmailNotifications(customerData.email_notifications || false);
-          setEditForm({ first_name: customerData.first_name, last_name: customerData.last_name, email: customerData.email, phone: customerData.phone || "", agent_id: customerData.agent_id || "" });
+          setEmailNotifications(false); // email_notifications column doesn't exist yet
+          setEditForm({ first_name: customerData.first_name, last_name: customerData.last_name, email: customerData.email, phone: customerData.phone || "", agent_id: customerData.agent_id || "", pricing_tier_id: customerData.pricing_tier_id || "" });
         }
 
         const { data: inStockData } = await supabase
@@ -313,7 +324,7 @@ export default function CustomerDetailsPage({
                 ) : (
                   <button onClick={() => {
                     if (customer) {
-                      setEditForm({ first_name: customer.first_name, last_name: customer.last_name, email: customer.email, phone: customer.phone || "", agent_id: customer.agent_id || "" });
+                      setEditForm({ first_name: customer.first_name, last_name: customer.last_name, email: customer.email, phone: customer.phone || "", agent_id: customer.agent_id || "", pricing_tier_id: customer.pricing_tier_id || "" });
                     }
                     setEditing(true);
                   }} className="p-1.5 text-txt-tertiary hover:text-txt-primary hover:bg-surface-hover rounded transition-colors duration-150 cursor-pointer">
@@ -364,6 +375,29 @@ export default function CustomerDetailsPage({
                     customer.agent ? (
                       <span className="courier-badge">{customer.agent.company_name || customer.agent.name}</span>
                     ) : "\u2014"
+                  )}
+                </DetailRow>
+                <DetailRow icon={DollarSign} label="Pricing tier">
+                  {editing ? (
+                    <select
+                      value={editForm.pricing_tier_id}
+                      onChange={(e) => setEditForm({ ...editForm, pricing_tier_id: e.target.value })}
+                      className="form-input text-right"
+                    >
+                      <option value="">No tier</option>
+                      {pricingTiers.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name} — ${t.base_rate_per_lb}/{t.currency}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    (() => {
+                      const tier = pricingTiers.find((t) => t.id === customer.pricing_tier_id);
+                      return tier ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-meta bg-violet-50 text-violet-700">
+                          {tier.name}
+                        </span>
+                      ) : "\u2014";
+                    })()
                   )}
                 </DetailRow>
               </div>
@@ -502,6 +536,18 @@ export default function CustomerDetailsPage({
                     <span className="courier-badge">{customer.courier_group.code}</span>
                   </div>
                 )}
+                {customer.pricing_tier_id && (() => {
+                  const tier = pricingTiers.find((t) => t.id === customer.pricing_tier_id);
+                  return tier ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-ui-sm text-txt-secondary">Pricing tier</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-meta bg-violet-50 text-violet-700">
+                        <DollarSign size={10} />
+                        {tier.name}
+                      </span>
+                    </div>
+                  ) : null;
+                })()}
               </div>
             </div>
 

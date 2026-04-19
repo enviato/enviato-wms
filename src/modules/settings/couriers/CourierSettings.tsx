@@ -67,6 +67,7 @@ export default function CourierSettings() {
         const { data: couriersData } = await supabase
           .from("courier_groups")
           .select("*")
+          .eq("type", "shipping")
           .is("deleted_at", null);
         if (couriersData) {
           setCouriers(couriersData);
@@ -91,12 +92,13 @@ export default function CourierSettings() {
       const { error } = await supabase.from("courier_groups").insert({
         name: courierForm.name,
         code: courierForm.code,
+        type: "shipping",
       });
 
       if (!error) {
         setCourierForm({ name: "", contactEmail: "", contactPhone: "", code: "", country: "" });
         setCourierFormOpen(false);
-        const { data } = await supabase.from("courier_groups").select("*").is("deleted_at", null);
+        const { data } = await supabase.from("courier_groups").select("*").eq("type", "shipping").is("deleted_at", null);
         if (data) setCouriers(data);
         showSuccess("Shipping carrier added");
       } else {
@@ -146,7 +148,7 @@ export default function CourierSettings() {
 
       setEditCourierOpen(false);
       setEditCourier(null);
-      const { data } = await supabase.from("courier_groups").select("*").is("deleted_at", null);
+      const { data } = await supabase.from("courier_groups").select("*").eq("type", "shipping").is("deleted_at", null);
       if (data) setCouriers(data);
       showSuccess("Shipping carrier updated");
     } catch (error) {

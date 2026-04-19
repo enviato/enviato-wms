@@ -275,12 +275,13 @@ export default function InvoicesPage() {
   /* ───────── Data loading ───────── */
   useEffect(() => {
     async function loadData() {
-      const { data: invData, count: invCount } = await supabase
+      const { data: invData, error: invError, count: invCount } = await supabase
         .from("invoices")
-        .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages(awb:awbs(awb_number))`, { count: "exact", head: false })
+        .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups!invoices_courier_group_id_fkey(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages!fk_packages_invoice(awb:awbs!fk_packages_awb(awb_number))`, { count: "exact", head: false })
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .range(0, 999);
+      if (invError) logger.error("Error loading invoices:", invError);
       if (invData) {
         setInvoices(invData as InvoiceRow[]);
         if (invCount != null) setServerTotal(invCount);
@@ -384,7 +385,7 @@ export default function InvoicesPage() {
           status: "draft",
           org_id: orgRow.id,
         })
-        .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages(awb:awbs(awb_number))`)
+        .select(`*, customer:users!invoices_customer_id_fkey(first_name, last_name, email), courier_group:courier_groups!invoices_courier_group_id_fkey(code, name), billed_by_agent:agents!invoices_billed_by_agent_id_fkey(company_name, name, agent_code, email, phone, address_line1, city, state, country, zip_code), packages!fk_packages_invoice(awb:awbs!fk_packages_awb(awb_number))`)
         .single();
 
       if (error) { logger.error("Error creating invoice", error); table.showError("Error creating invoice"); return; }

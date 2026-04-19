@@ -30,6 +30,7 @@ import {
   Printer,
   Bell,
   Trash2,
+  DollarSign,
   type LucideIcon,
 } from "lucide-react";
 
@@ -52,6 +53,7 @@ const SETTINGS_TABS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "couriers", label: "Shipping Carriers", icon: Truck },
   { id: "airlines", label: "Airlines", icon: Plane },
   { id: "ocean", label: "Ocean Carriers", icon: Ship },
+  { id: "pricing", label: "Pricing", icon: DollarSign },
   { id: "packageid", label: "Package ID", icon: Hash },
   { id: "locations", label: "Warehouse Locations", icon: MapPin },
   { id: "tags", label: "Tags", icon: Tag },

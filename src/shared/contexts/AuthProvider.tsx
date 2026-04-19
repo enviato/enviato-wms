@@ -76,13 +76,13 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
       const [userResult, orgResult] = await Promise.all([
         supabase
           .from("users")
-          .select("id, first_name, last_name, email, phone, role_v2, role_id, courier_group_id, agent_id, is_active, email_notifications")
+          .select("id, first_name, last_name, email, phone, role_v2, role_id, courier_group_id, agent_id, is_active")
           .eq("id", supaUser.id)
           .single(),
         // Fetch org — try with logo_icon_url first, fallback without
         supabase
           .from("organizations")
-          .select("id, name, slug, logo_url, logo_icon_url, plan_tier, settings, address_line1, address_line2, city, state, zip, country, phone, email")
+          .select("id, name, slug, logo_url, logo_icon_url, plan_tier, settings, address")
           .limit(1)
           .single(),
       ]);
@@ -94,7 +94,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
       if (orgResult.error && !orgData) {
         const { data: orgFallback } = await supabase
           .from("organizations")
-          .select("id, name, slug, logo_url, plan_tier, settings, address_line1, address_line2, city, state, zip, country, phone, email")
+          .select("id, name, slug, logo_url, plan_tier, settings, address")
           .limit(1)
           .single();
         orgData = orgFallback

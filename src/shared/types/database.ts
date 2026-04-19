@@ -14,14 +14,7 @@ export interface Organization {
   logo_icon_url: string | null;
   plan_tier: string;
   settings: Record<string, unknown> | null;
-  address_line1: string | null;
-  address_line2: string | null;
-  city: string | null;
-  state: string | null;
-  zip: string | null;
-  country: string | null;
-  phone: string | null;
-  email: string | null;
+  address: Record<string, unknown> | null;
 }
 
 export type UserRole = "ORG_ADMIN" | "WAREHOUSE_STAFF" | "AGENT_ADMIN" | "AGENT_STAFF" | "CUSTOMER";
@@ -37,7 +30,6 @@ export interface User {
   courier_group_id: string | null;
   agent_id: string | null;
   is_active: boolean;
-  email_notifications: boolean;
 }
 
 export interface Agent {

@@ -71,7 +71,6 @@ type FormData = {
   airline_or_vessel: string;
   origin: string;
   destination: string;
-  total_pieces: string;
   total_weight: string;
   courier_group_id: string;
 };
@@ -117,7 +116,7 @@ export default function AwbsPage() {
   const [awbs, setAwbs] = useState<AwbRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serverTotal, setServerTotal] = useState(0);
-  const [courierGroups, setCourierGroups] = useState<{ id: string; name: string; code: string }[]>([]);
+  const [courierGroups, setCourierGroups] = useState<{ id: string; name: string; code: string; type: string }[]>([]);
   const [agentsList, setAgentsList] = useState<{ id: string; name: string; company_name: string | null; agent_code: string | null }[]>([]);
 
   /* Filter state */
@@ -136,7 +135,7 @@ export default function AwbsPage() {
   const [creating, setCreating] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     awb_number: "", freight_type: "air", airline_or_vessel: "", origin: "",
-    destination: "", total_pieces: "", total_weight: "", courier_group_id: "",
+    destination: "", total_weight: "", courier_group_id: "",
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
@@ -238,11 +237,11 @@ export default function AwbsPage() {
         })) as AwbRow[]);
       }
 
-      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, name, code, logo_url").is("deleted_at", null);
+      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, name, code, type, logo_url").is("deleted_at", null);
       if (grpError) {
         logger.error("courier_groups query", grpError);
       }
-      if (grpData) setCourierGroups(grpData as { id: string; name: string; code: string; logo_url?: string | null }[]);
+      if (grpData) setCourierGroups(grpData as { id: string; name: string; code: string; type: string; logo_url?: string | null }[]);
 
       const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentError) {
@@ -365,10 +364,10 @@ export default function AwbsPage() {
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
     if (!formData.awb_number.trim()) errors.awb_number = "Shipment number is required";
-    if (!formData.freight_type.trim()) errors.freight_type = "Freight Type is required";
+    if (!formData.freight_type.trim()) errors.freight_type = "Freight Mode is required";
+    if (!formData.courier_group_id.trim()) errors.courier_group_id = "Carrier is required";
     if (!formData.origin.trim()) errors.origin = "Origin is required";
     if (!formData.destination.trim()) errors.destination = "Destination is required";
-    if (!formData.courier_group_id.trim()) errors.courier_group_id = "Courier Group is required";
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -382,14 +381,15 @@ export default function AwbsPage() {
       const { data: orgRow } = await supabase.from("organizations").select("id").limit(1).single();
       if (!orgRow) { logger.error("No organization found"); return; }
 
+      const selectedCarrier = courierGroups.find((g) => g.id === formData.courier_group_id);
       const newAwb = {
         org_id: orgRow.id,
         awb_number: formData.awb_number,
         freight_type: formData.freight_type,
-        airline_or_vessel: formData.airline_or_vessel || null,
+        airline_or_vessel: selectedCarrier?.name || formData.airline_or_vessel || null,
         origin: formData.origin || null,
         destination: formData.destination || null,
-        total_pieces: formData.total_pieces ? parseInt(formData.total_pieces) : 0,
+        total_pieces: 0,
         total_weight: formData.total_weight ? parseFloat(formData.total_weight) : null,
         courier_group_id: formData.courier_group_id,
         status: "packing",
@@ -405,7 +405,7 @@ export default function AwbsPage() {
       if (result) {
         setAwbs((prev) => [result as AwbRow, ...prev]);
         setShowCreateModal(false);
-        setFormData({ awb_number: "", freight_type: "air", airline_or_vessel: "", origin: "", destination: "", total_pieces: "", total_weight: "", courier_group_id: "" });
+        setFormData({ awb_number: "", freight_type: "air", airline_or_vessel: "", origin: "", destination: "", total_weight: "", courier_group_id: "" });
         setFormErrors({});
         table.setCurrentPage(1);
         table.showSuccess("Shipment created");
@@ -628,18 +628,32 @@ export default function AwbsPage() {
                 {formErrors.awb_number && <p className="text-meta text-red-500 mt-1">{formErrors.awb_number}</p>}
               </div>
               <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Freight Type</label>
+                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Freight Mode</label>
                 <SearchableSelect
                   value={formData.freight_type}
-                  onChange={(v) => setFormData({ ...formData, freight_type: v })}
+                  onChange={(v) => setFormData({ ...formData, freight_type: v, courier_group_id: "", airline_or_vessel: "" })}
                   searchable={false}
-                  options={[{ value: "air", label: "Air" }, { value: "ocean", label: "Ocean" }]}
+                  options={[{ value: "air", label: "Air Freight" }, { value: "ocean", label: "Ocean Freight" }]}
                 />
                 {formErrors.freight_type && <p className="text-meta text-red-500 mt-1">{formErrors.freight_type}</p>}
               </div>
               <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Carrier (Airline / Vessel)</label>
-                <input type="text" value={formData.airline_or_vessel} onChange={(e) => setFormData({ ...formData, airline_or_vessel: e.target.value })} placeholder="Enter carrier name" className="form-input" />
+                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">
+                  {formData.freight_type === "ocean" ? "Ocean Carrier" : "Airline"}
+                </label>
+                <SearchableSelect
+                  value={formData.courier_group_id}
+                  onChange={(v) => {
+                    const selected = courierGroups.find((g) => g.id === v);
+                    setFormData({ ...formData, courier_group_id: v, airline_or_vessel: selected?.name || "" });
+                  }}
+                  placeholder={formData.freight_type === "ocean" ? "Select an ocean carrier" : "Select an airline"}
+                  searchPlaceholder="Search carriers…"
+                  options={courierGroups
+                    .filter((g) => g.type === (formData.freight_type === "ocean" ? "ocean" : "airline"))
+                    .map((g) => ({ value: g.id, label: g.code ? `${g.name} (${g.code})` : g.name }))}
+                />
+                {formErrors.courier_group_id && <p className="text-meta text-red-500 mt-1">{formErrors.courier_group_id}</p>}
               </div>
               <div>
                 <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Origin</label>
@@ -652,30 +666,13 @@ export default function AwbsPage() {
                 {formErrors.destination && <p className="text-meta text-red-500 mt-1">{formErrors.destination}</p>}
               </div>
               <div>
-                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Courier Group</label>
-                <SearchableSelect
-                  value={formData.courier_group_id}
-                  onChange={(v) => setFormData({ ...formData, courier_group_id: v })}
-                  placeholder="Select a courier group"
-                  searchPlaceholder="Search groups…"
-                  options={courierGroups.map((g) => ({ value: g.id, label: `${g.name} (${g.code})` }))}
-                />
-                {formErrors.courier_group_id && <p className="text-meta text-red-500 mt-1">{formErrors.courier_group_id}</p>}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Pieces</label>
-                  <input type="number" value={formData.total_pieces} onChange={(e) => setFormData({ ...formData, total_pieces: e.target.value })} placeholder="0" className="form-input" />
-                </div>
-                <div>
-                  <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Weight (lbs)</label>
-                  <input type="number" value={formData.total_weight} onChange={(e) => setFormData({ ...formData, total_weight: e.target.value })} placeholder="0.00" className="form-input" />
-                </div>
+                <label className="text-meta text-txt-tertiary tracking-tight block mb-1.5">Weight (lbs)</label>
+                <input type="number" value={formData.total_weight} onChange={(e) => setFormData({ ...formData, total_weight: e.target.value })} placeholder="0.00" className="form-input" />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-4 border-t border-border">
               <button onClick={() => setShowCreateModal(false)} className="btn-secondary cursor-pointer">Cancel</button>
-              <button onClick={handleCreateAwb} disabled={creating || !formData.awb_number || !formData.courier_group_id} className="btn-primary flex items-center gap-2 cursor-pointer">
+              <button onClick={handleCreateAwb} disabled={creating || !formData.awb_number || !formData.courier_group_id || !formData.freight_type} className="btn-primary flex items-center gap-2 cursor-pointer">
                 {creating && <Loader2 size={14} className="animate-spin" />}
                 Add Shipment
               </button>

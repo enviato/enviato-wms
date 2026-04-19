@@ -68,13 +68,26 @@ type PackageRow = {
   status: string;
   invoice_id: string | null;
   carrier: string | null;
-  customer?: { id: string; first_name: string; last_name: string; email: string; phone: string | null } | null;
+  commodity: string | null;
+  customer?: { id: string; first_name: string; last_name: string; email: string; phone: string | null; pricing_tier_id: string | null; agent_id: string | null } | null;
+};
+
+type PricingTierInfo = {
+  id: string;
+  name: string;
+  base_rate_per_lb: number;
+  delivery_fee: number;
+  hazmat_fee: number;
+  currency: string;
+  commodity_rates: { commodity_name: string; rate_per_lb: number }[];
 };
 
 type CustomerGroup = {
   customer_id: string;
   customer_name: string;
   customer_email: string;
+  pricing_tier_id: string | null;
+  agent_id: string | null;
   packages: PackageRow[];
   package_count: number;
   total_billable_weight: number;
@@ -132,6 +145,7 @@ export default function AwbDetailPage() {
   const [successMessage, setSuccessMessage] = useState("");
   const [expandedCustomers, setExpandedCustomers] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [tierCache, setTierCache] = useState<Record<string, PricingTierInfo>>({});
 
   const showSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -156,7 +170,7 @@ export default function AwbDetailPage() {
     /* Packages in this AWB with customer info */
     const { data: pkgData } = await supabase
       .from("packages")
-      .select(`id, tracking_number, customer_id, weight, length, width, height, volume_weight, billable_weight, status, invoice_id, carrier, customer:users!packages_customer_id_fkey(id, first_name, last_name, email, phone)`)
+      .select(`id, tracking_number, customer_id, weight, length, width, height, volume_weight, billable_weight, status, invoice_id, carrier, commodity, customer:users!packages_customer_id_fkey(id, first_name, last_name, email, phone, pricing_tier_id, agent_id)`)
       .eq("awb_id", id)
       .is("deleted_at", null)
       .order("created_at", { ascending: true });
@@ -175,7 +189,8 @@ export default function AwbDetailPage() {
       const { data: invData } = await supabase
         .from("invoices")
         .select("id, invoice_number, status, customer_id")
-        .in("id", invoiceIds);
+        .in("id", invoiceIds)
+        .is("deleted_at", null);
       if (invData) {
         for (const inv of invData as InvoiceRow[]) {
           invoiceMap[inv.id] = inv;
@@ -192,6 +207,8 @@ export default function AwbDetailPage() {
           customer_id: custId,
           customer_name: pkg.customer ? `${pkg.customer.first_name} ${pkg.customer.last_name}`.trim() : "Unassigned",
           customer_email: pkg.customer?.email || "",
+          pricing_tier_id: pkg.customer?.pricing_tier_id || null,
+          agent_id: pkg.customer?.agent_id || null,
           packages: [],
           package_count: 0,
           total_billable_weight: 0,
@@ -211,7 +228,30 @@ export default function AwbDetailPage() {
       }
     }
 
-    setCustomerGroups(Object.values(groupMap).sort((a, b) => a.customer_name.localeCompare(b.customer_name)));
+    const groups = Object.values(groupMap).sort((a, b) => a.customer_name.localeCompare(b.customer_name));
+    setCustomerGroups(groups);
+
+    /* Preload pricing tiers for all customers that have one assigned */
+    const uniqueTierIds = [...new Set(groups.map((g) => g.pricing_tier_id).filter(Boolean))] as string[];
+    if (uniqueTierIds.length > 0) {
+      const { data: tiersData } = await supabase
+        .from("pricing_tiers")
+        .select("id, name, base_rate_per_lb, delivery_fee, hazmat_fee, currency")
+        .in("id", uniqueTierIds)
+        .eq("is_active", true);
+      if (tiersData) {
+        const newCache: Record<string, PricingTierInfo> = {};
+        for (const t of tiersData) {
+          const { data: rates } = await supabase
+            .from("pricing_tier_commodity_rates")
+            .select("commodity_name, rate_per_lb")
+            .eq("pricing_tier_id", t.id);
+          newCache[t.id] = { ...t, commodity_rates: rates || [] };
+        }
+        setTierCache(newCache);
+      }
+    }
+
     setLoading(false);
   };
 
@@ -233,6 +273,48 @@ export default function AwbDetailPage() {
     return `${prefix}${String(nextNum).padStart(4, "0")}`;
   };
 
+  /* ───────── Fetch pricing tier (with caching) ───────── */
+  const fetchPricingTier = async (tierId: string): Promise<PricingTierInfo | null> => {
+    if (tierCache[tierId]) return tierCache[tierId];
+
+    const { data: tier } = await supabase
+      .from("pricing_tiers")
+      .select("id, name, base_rate_per_lb, delivery_fee, hazmat_fee, currency")
+      .eq("id", tierId)
+      .eq("is_active", true)
+      .single();
+    if (!tier) return null;
+
+    const { data: rates } = await supabase
+      .from("pricing_tier_commodity_rates")
+      .select("commodity_name, rate_per_lb")
+      .eq("pricing_tier_id", tierId);
+
+    const tierInfo: PricingTierInfo = {
+      ...tier,
+      commodity_rates: rates || [],
+    };
+    setTierCache((prev) => ({ ...prev, [tierId]: tierInfo }));
+    return tierInfo;
+  };
+
+  /* ───────── Resolve rate for a single package ───────── */
+  const resolvePackageRate = (
+    pkg: PackageRow,
+    tier: PricingTierInfo | null,
+    fallbackRate: number
+  ): number => {
+    if (!tier) return fallbackRate;
+    // Check for commodity-specific override first
+    if (pkg.commodity) {
+      const override = tier.commodity_rates.find(
+        (cr) => cr.commodity_name.toLowerCase() === pkg.commodity!.toLowerCase()
+      );
+      if (override) return override.rate_per_lb;
+    }
+    return tier.base_rate_per_lb;
+  };
+
   /* ───────── Generate invoice for a single customer ───────── */
   const generateInvoiceForCustomer = async (group: CustomerGroup) => {
     if (!awb || !awb.courier_group || group.customer_id === "unassigned") return;
@@ -241,42 +323,62 @@ export default function AwbDetailPage() {
     try {
       const agent = awb.courier_group;
       const invoiceNumber = await generateInvoiceNumber();
-      const ratePerLb = Number(agent.rate_per_lb) || 0;
+      const fallbackRate = Number(agent.rate_per_lb) || 0;
 
-      /* Build invoice lines */
-      const lines = group.packages.map((pkg) => ({
-        tracking_number: pkg.tracking_number,
-        actual_weight: Number(pkg.weight || 0),
-        volume_weight: Number(pkg.volume_weight || 0),
-        billable_weight: Number(pkg.billable_weight || 0),
-        rate_per_lb: ratePerLb,
-        line_total: Number(pkg.billable_weight || 0) * ratePerLb,
-        package_id: pkg.id,
-        description: `Package ${pkg.tracking_number}`,
-      }));
+      /* Look up the customer's pricing tier */
+      const tier = group.pricing_tier_id
+        ? await fetchPricingTier(group.pricing_tier_id)
+        : null;
 
-      const subtotal = lines.reduce((sum, l) => sum + l.line_total, 0);
+      const currency = tier?.currency || agent.currency || "USD";
+
+      /* Build invoice lines — each package may have a different rate */
+      const lines = group.packages.map((pkg) => {
+        const rate = resolvePackageRate(pkg, tier, fallbackRate);
+        const billableWt = Number(pkg.billable_weight || 0);
+        return {
+          tracking_number: pkg.tracking_number,
+          actual_weight: Number(pkg.weight || 0),
+          volume_weight: Number(pkg.volume_weight || 0),
+          billable_weight: billableWt,
+          rate_per_lb: rate,
+          line_total: billableWt * rate,
+          package_id: pkg.id,
+          description: pkg.commodity
+            ? `Package ${pkg.tracking_number} (${pkg.commodity})`
+            : `Package ${pkg.tracking_number}`,
+        };
+      });
+
+      const lineSubtotal = lines.reduce((sum, l) => sum + l.line_total, 0);
+
+      /* Add tier fees (delivery + hazmat) when a tier is assigned */
+      const deliveryFee = tier?.delivery_fee || 0;
+      const hazmatFee = tier?.hazmat_fee || 0;
+      const feesTotal = deliveryFee + hazmatFee;
+      const subtotal = lineSubtotal + feesTotal;
 
       /* Fetch org_id dynamically */
       const { data: orgRow } = await supabase.from("organizations").select("id").limit(1).single();
       if (!orgRow) { logger.error("No organization found"); return; }
 
-      /* Create the invoice */
+      /* Create the invoice — billed_by_agent_id is the customer's parent agent */
       const { data: invoice, error: invErr } = await supabase
         .from("invoices")
         .insert({
           org_id: orgRow.id,
           courier_group_id: awb.courier_group_id,
           customer_id: group.customer_id,
+          billed_by_agent_id: group.agent_id,
           invoice_number: invoiceNumber,
           status: "draft",
           pricing_model: agent.pricing_model || "gross_weight",
-          rate_per_lb: ratePerLb,
+          rate_per_lb: tier?.base_rate_per_lb ?? fallbackRate,
           subtotal,
           tax_rate: 0,
           tax_amount: 0,
           total: subtotal,
-          currency: agent.currency || "USD",
+          currency,
         })
         .select("id")
         .single();
@@ -286,20 +388,53 @@ export default function AwbDetailPage() {
         return;
       }
 
-      /* Create invoice lines */
-      const { error: linesErr } = await supabase.from("invoice_lines").insert(
-        lines.map((l) => ({
+      /* Create invoice lines — package lines + fee lines */
+      const invoiceLines: Record<string, unknown>[] = lines.map((l) => ({
+        invoice_id: invoice.id,
+        package_id: l.package_id,
+        tracking_number: l.tracking_number,
+        actual_weight: l.actual_weight,
+        volume_weight: l.volume_weight,
+        billable_weight: l.billable_weight,
+        rate_per_lb: l.rate_per_lb,
+        line_total: l.line_total,
+        description: l.description,
+        charge_type: "package",
+      }));
+
+      /* Add delivery fee line if applicable */
+      if (deliveryFee > 0) {
+        invoiceLines.push({
           invoice_id: invoice.id,
-          package_id: l.package_id,
-          tracking_number: l.tracking_number,
-          actual_weight: l.actual_weight,
-          volume_weight: l.volume_weight,
-          billable_weight: l.billable_weight,
-          rate_per_lb: l.rate_per_lb,
-          line_total: l.line_total,
-          description: l.description,
-        }))
-      );
+          package_id: null,
+          tracking_number: null,
+          actual_weight: null,
+          volume_weight: null,
+          billable_weight: null,
+          rate_per_lb: null,
+          line_total: deliveryFee,
+          description: "Delivery Fee",
+          charge_type: "flat",
+        });
+      }
+
+      /* Add hazmat fee line if applicable */
+      if (hazmatFee > 0) {
+        invoiceLines.push({
+          invoice_id: invoice.id,
+          package_id: null,
+          tracking_number: null,
+          actual_weight: null,
+          volume_weight: null,
+          billable_weight: null,
+          rate_per_lb: null,
+          line_total: hazmatFee,
+          description: "Hazmat Fee",
+          charge_type: "flat",
+        });
+      }
+
+      const { error: linesErr } = await supabase.from("invoice_lines").insert(invoiceLines);
       if (linesErr) logger.error("Error creating invoice lines", linesErr);
 
       /* Link packages to the invoice */
@@ -484,6 +619,9 @@ export default function AwbDetailPage() {
             <p className="text-2xl font-bold text-txt-primary mt-1">
               {awb.courier_group ? `$${Number(awb.courier_group.rate_per_lb).toFixed(2)}` : "—"}
             </p>
+            {Object.keys(tierCache).length > 0 && (
+              <p className="text-meta text-primary mt-0.5">Tier pricing active</p>
+            )}
           </div>
         </div>
 
@@ -542,7 +680,11 @@ export default function AwbDetailPage() {
               {filteredCustomerGroups.map((group) => {
                 const isExpanded = expandedCustomers.has(group.customer_id) || searchExpandedIds.has(group.customer_id);
                 const invSc = group.invoice_status ? invoiceStatusConfig[group.invoice_status] : null;
-                const estimatedTotal = group.total_billable_weight * Number(awb.courier_group?.rate_per_lb || 0);
+                const cachedTier = group.pricing_tier_id ? tierCache[group.pricing_tier_id] : null;
+                const displayRate = cachedTier ? cachedTier.base_rate_per_lb : Number(awb.courier_group?.rate_per_lb || 0);
+                const estimatedTotal = group.total_billable_weight * displayRate
+                  + (cachedTier?.delivery_fee || 0)
+                  + (cachedTier?.hazmat_fee || 0);
 
                 return (
                   <div key={group.customer_id} className="border-b border-border last:border-b-0">
