@@ -8,6 +8,7 @@ import { adminDelete } from "@/lib/admin-delete";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
+import { useCustomers, useCourierGroups } from "@/shared/hooks/queries";
 import BatchBar from "@/shared/components/DataTable/BatchBar";
 import type { ColumnDef } from "@/shared/types/common";
 import ColumnHeaderMenu from "@/components/ColumnHeaderMenu";
@@ -144,8 +145,14 @@ export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serverTotal, setServerTotal] = useState(0);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [courierGroups, setCourierGroups] = useState<CourierGroup[]>([]);
+
+  /* Reference data — cached across pages via React Query.
+     billingAgents is a richer agent query (with address fields),
+     so it stays inline. */
+  const { data: customersRaw = [] } = useCustomers();
+  const { data: courierGroupsRaw = [] } = useCourierGroups();
+  const customers = customersRaw as unknown as Customer[];
+  const courierGroups = courierGroupsRaw as unknown as CourierGroup[];
   const [billingAgents, setBillingAgents] = useState<BillingAgent[]>([]);
 
   /* Table state — now managed by useTableState hook */
@@ -287,12 +294,8 @@ export default function InvoicesPage() {
         if (invCount != null) setServerTotal(invCount);
       }
 
-      const { data: custData } = await supabase.from("users").select("id, first_name, last_name").eq("role", "customer");
-      if (custData) setCustomers(custData as Customer[]);
-
-      const { data: grpData } = await supabase.from("courier_groups").select("id, code, name").is("deleted_at", null);
-      if (grpData) setCourierGroups(grpData as CourierGroup[]);
-
+      // customers and courier_groups fetched via React Query hooks above.
+      // billingAgents keeps its own fetch — richer column set than useAgents().
       const { data: agentData } = await supabase.from("agents").select("id, name, company_name, agent_code, email, phone, address_line1, address_line2, city, state, country, zip_code").eq("status", "active").is("deleted_at", null).order("name");
       if (agentData) setBillingAgents(agentData as BillingAgent[]);
 

@@ -77,16 +77,36 @@ export async function middleware(request: NextRequest) {
   // Only ORG_ADMIN and WAREHOUSE_STAFF (and custom-role users with
   // relevant permissions) may access /admin pages. Customer-role users
   // are redirected to a future /portal route (or /login for now).
+  //
+  // PERF (migration 015): role_v2 and role_id are injected into the
+  // JWT's app_metadata by the `custom_access_token_hook` Postgres
+  // function. We read them straight off the already-verified JWT
+  // to avoid a per-request round-trip to public.users. If the claim
+  // is absent (hook disabled, or user signed in before hook was
+  // enabled and their token hasn't refreshed yet), we fall back to
+  // the DB query so the middleware stays correct.
   if (user && pathname.startsWith("/admin")) {
-    const { data: profile } = await supabase
-      .from("users")
-      .select("role_v2, role_id")
-      .eq("id", user.id)
-      .single();
+    const appMeta = user.app_metadata as
+      | { role_v2?: string | null; role_id?: string | null }
+      | undefined;
+    let role: string | null | undefined = appMeta?.role_v2;
+    let roleId: string | null | undefined = appMeta?.role_id;
 
-    const role = profile?.role_v2;
+    // Fallback: JWT didn't carry the claim (hook not enabled yet,
+    // or stale token). One DB hit here, but only on the transition
+    // window — normal steady-state path above skips this.
+    if (role === undefined) {
+      const { data: profile } = await supabase
+        .from("users")
+        .select("role_v2, role_id")
+        .eq("id", user.id)
+        .single();
+      role = profile?.role_v2 ?? null;
+      roleId = profile?.role_id ?? null;
+    }
+
     const hasAdminRole = role === "ORG_ADMIN" || role === "WAREHOUSE_STAFF";
-    const hasCustomRole = !!profile?.role_id; // custom roles are permission-gated client-side
+    const hasCustomRole = !!roleId; // custom roles are permission-gated client-side
 
     if (!hasAdminRole && !hasCustomRole) {
       const url = request.nextUrl.clone();

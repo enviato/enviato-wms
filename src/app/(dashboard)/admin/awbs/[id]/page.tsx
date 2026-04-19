@@ -159,21 +159,21 @@ export default function AwbDetailPage() {
   }, [id]);
 
   const loadData = async () => {
-    /* AWB details with agent info */
-    const { data: awbData } = await supabase
-      .from("awbs")
-      .select(`*, courier_group:courier_groups(id, name, code, country, contact_email, contact_phone, pricing_model, rate_per_lb, currency)`)
-      .eq("id", id)
-      .single();
+    /* AWB + packages in parallel — both only depend on the URL id. */
+    const [{ data: awbData }, { data: pkgData }] = await Promise.all([
+      supabase
+        .from("awbs")
+        .select(`*, courier_group:courier_groups(id, name, code, country, contact_email, contact_phone, pricing_model, rate_per_lb, currency)`)
+        .eq("id", id)
+        .single(),
+      supabase
+        .from("packages")
+        .select(`id, tracking_number, customer_id, weight, length, width, height, volume_weight, billable_weight, status, invoice_id, carrier, commodity, customer:users!packages_customer_id_fkey(id, first_name, last_name, email, phone, pricing_tier_id, agent_id)`)
+        .eq("awb_id", id)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true }),
+    ]);
     if (awbData) setAwb(awbData as AwbDetail);
-
-    /* Packages in this AWB with customer info */
-    const { data: pkgData } = await supabase
-      .from("packages")
-      .select(`id, tracking_number, customer_id, weight, length, width, height, volume_weight, billable_weight, status, invoice_id, carrier, commodity, customer:users!packages_customer_id_fkey(id, first_name, last_name, email, phone, pricing_tier_id, agent_id)`)
-      .eq("awb_id", id)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: true });
     /* Supabase returns foreign key as array — normalize to single object */
     const pkgs: PackageRow[] = (pkgData || []).map((p: Record<string, unknown>) => ({
       ...p,
@@ -240,13 +240,29 @@ export default function AwbDetailPage() {
         .in("id", uniqueTierIds)
         .eq("is_active", true);
       if (tiersData) {
+        /* Fetch all tiers' commodity rates in a single round trip, then group. */
+        const tierIds = tiersData.map((t) => t.id);
+        const { data: allRates } = await supabase
+          .from("pricing_tier_commodity_rates")
+          .select("pricing_tier_id, commodity_name, rate_per_lb")
+          .in("pricing_tier_id", tierIds);
+
+        const ratesByTier: Record<string, Array<{ commodity_name: string; rate_per_lb: number }>> = {};
+        for (const r of (allRates ?? []) as Array<{
+          pricing_tier_id: string;
+          commodity_name: string;
+          rate_per_lb: number;
+        }>) {
+          if (!ratesByTier[r.pricing_tier_id]) ratesByTier[r.pricing_tier_id] = [];
+          ratesByTier[r.pricing_tier_id].push({
+            commodity_name: r.commodity_name,
+            rate_per_lb: r.rate_per_lb,
+          });
+        }
+
         const newCache: Record<string, PricingTierInfo> = {};
         for (const t of tiersData) {
-          const { data: rates } = await supabase
-            .from("pricing_tier_commodity_rates")
-            .select("commodity_name, rate_per_lb")
-            .eq("pricing_tier_id", t.id);
-          newCache[t.id] = { ...t, commodity_rates: rates || [] };
+          newCache[t.id] = { ...t, commodity_rates: ratesByTier[t.id] || [] };
         }
         setTierCache(newCache);
       }

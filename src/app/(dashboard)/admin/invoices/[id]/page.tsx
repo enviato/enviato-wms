@@ -194,43 +194,50 @@ export default function InvoiceDetailPage() {
       setInvoice(invData as InvoiceDetail);
     }
 
-    /* Customer */
-    if (invData?.customer_id) {
-      const { data: custData } = await supabase
-        .from("users")
-        .select("id, first_name, last_name, email, phone")
-        .eq("id", invData.customer_id)
-        .single();
-      if (custData) setCustomer(custData as CustomerInfo);
-    }
+    /* Parallelize the 4 independent fetches that all hang off invData:
+       customer, courier group agent, billing agent, invoice lines.
+       Using null-returning fallbacks keeps the tuple destructure uniform. */
+    const [custRes, agentRes, baRes, linesRes] = await Promise.all([
+      invData?.customer_id
+        ? supabase
+            .from("users")
+            .select("id, first_name, last_name, email, phone")
+            .eq("id", invData.customer_id)
+            .single()
+        : Promise.resolve({ data: null, error: null } as { data: null; error: null }),
+      invData?.courier_group_id
+        ? supabase
+            .from("courier_groups")
+            .select("id, name, code, country, contact_email, contact_phone, pricing_model, rate_per_lb, currency")
+            .eq("id", invData.courier_group_id)
+            .single()
+        : Promise.resolve({ data: null, error: null } as { data: null; error: null }),
+      invData?.billed_by_agent_id
+        ? supabase
+            .from("agents")
+            .select("id, name, company_name, email, phone")
+            .eq("id", invData.billed_by_agent_id)
+            .single()
+        : Promise.resolve({ data: null, error: null } as { data: null; error: null }),
+      invData
+        ? supabase
+            .from("invoice_lines")
+            .select("*")
+            .eq("invoice_id", invData.id)
+            .order("tracking_number")
+        : Promise.resolve({ data: null, error: null } as { data: null; error: null }),
+    ]);
 
-    /* Agent */
-    if (invData?.courier_group_id) {
-      const { data: agentData } = await supabase
-        .from("courier_groups")
-        .select("id, name, code, country, contact_email, contact_phone, pricing_model, rate_per_lb, currency")
-        .eq("id", invData.courier_group_id)
-        .single();
-      if (agentData) setAgent(agentData as AgentInfo);
-    }
-
-    /* Billing agent (customer's parent agent) */
-    if (invData?.billed_by_agent_id) {
-      const { data: baData } = await supabase
-        .from("agents")
-        .select("id, name, company_name, email, phone")
-        .eq("id", invData.billed_by_agent_id)
-        .single();
-      if (baData) setBillingAgent(baData as BillingAgentInfo);
-    }
+    if (custRes.data) setCustomer(custRes.data as CustomerInfo);
+    if (agentRes.data) setAgent(agentRes.data as AgentInfo);
+    if (baRes.data) setBillingAgent(baRes.data as BillingAgentInfo);
 
     /* Invoice lines with AWB info */
     if (invData) {
-      const { data: linesData, error: linesError } = await supabase
-        .from("invoice_lines")
-        .select("*")
-        .eq("invoice_id", invData.id)
-        .order("tracking_number");
+      const { data: linesData, error: linesError } = linesRes as {
+        data: Array<Record<string, unknown>> | null;
+        error: unknown;
+      };
       if (linesError) logger.error("Error loading invoice lines:", linesError);
 
       if (linesData && linesData.length > 0) {

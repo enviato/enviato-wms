@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 import { logger } from "@/shared/lib/logger";
+import { useCourierGroups } from "@/shared/hooks/queries";
 import {
   ArrowLeft,
   Package,
@@ -120,9 +121,10 @@ export default function PackageDetailsPage() {
   const [availableTags, setAvailableTags] = useState<TagDefinition[]>([]);
   const [packageTagIds, setPackageTagIds] = useState<string[]>([]);
 
-  /* ── Courier groups state ── */
+  /* ── Courier groups (shared React Query cache) ── */
   type CourierGroup = { id: string; code: string; name: string; logo_url?: string | null };
-  const [courierGroupsList, setCourierGroupsList] = useState<CourierGroup[]>([]);
+  const { data: courierGroupsData } = useCourierGroups();
+  const courierGroupsList = (courierGroupsData ?? []) as unknown as CourierGroup[];
 
   /* ── Select Dropdown State ── */
   const [selectDropdownField, setSelectDropdownField] = useState<string | null>(null);
@@ -208,59 +210,60 @@ export default function PackageDetailsPage() {
       setPkg(pkgData as PackageDetail);
       setNotesValue(pkgData.notes || "");
 
-      // Other packages for this customer
-      const { data: otherPkgs } = await supabase
-        .from("packages")
-        .select("id, tracking_number, carrier, status, checked_in_at, weight, weight_unit")
-        .eq("customer_id", pkgData.customer_id)
-        .neq("id", packageId)
-        .is("deleted_at", null)
-        .order("checked_in_at", { ascending: false });
+      // Parallelize all 5 dependent queries — they only need customer_id / org_id / packageId
+      // from the main fetch above, and don't depend on each other.
+      const [
+        { data: otherPkgs },
+        { data: activityData },
+        { data: siblings },
+        { data: tagsData },
+        { data: pkgTags },
+      ] = await Promise.all([
+        // Other packages for this customer
+        supabase
+          .from("packages")
+          .select("id, tracking_number, carrier, status, checked_in_at, weight, weight_unit")
+          .eq("customer_id", pkgData.customer_id)
+          .neq("id", packageId)
+          .is("deleted_at", null)
+          .order("checked_in_at", { ascending: false }),
+        // Activity log
+        supabase
+          .from("activity_log")
+          .select("*, user:users(first_name, last_name)")
+          .eq("package_id", packageId)
+          .order("created_at", { ascending: false })
+          .limit(30),
+        // Siblings for navigation
+        supabase
+          .from("packages")
+          .select("id")
+          .eq("customer_id", pkgData.customer_id)
+          .is("deleted_at", null)
+          .order("checked_in_at", { ascending: false }),
+        // Available tags
+        supabase
+          .from("tag_definitions")
+          .select("id, name, color")
+          .eq("org_id", pkgData.org_id),
+        // Package tags
+        supabase
+          .from("package_tags")
+          .select("tag_id")
+          .eq("package_id", packageId),
+      ]);
+
       if (otherPkgs) setOtherPackages(otherPkgs as OtherPackage[]);
-
-      // Activity log
-      const { data: activityData } = await supabase
-        .from("activity_log")
-        .select("*, user:users(first_name, last_name)")
-        .eq("package_id", packageId)
-        .order("created_at", { ascending: false })
-        .limit(30);
       if (activityData) setActivityLog(activityData as ActivityLog[]);
-
-      // Siblings for navigation
-      const { data: siblings } = await supabase
-        .from("packages")
-        .select("id")
-        .eq("customer_id", pkgData.customer_id)
-        .is("deleted_at", null)
-        .order("checked_in_at", { ascending: false });
-
       if (siblings) {
         const ids = siblings.map(s => s.id);
         setSiblingIds(ids);
         setTotalCount(ids.length);
       }
-
-      // Available tags
-      const { data: tagsData } = await supabase
-        .from("tag_definitions")
-        .select("id, name, color")
-        .eq("org_id", pkgData.org_id);
       if (tagsData) setAvailableTags(tagsData as TagDefinition[]);
-
-      // Package tags
-      const { data: pkgTags } = await supabase
-        .from("package_tags")
-        .select("tag_id")
-        .eq("package_id", packageId);
       if (pkgTags) setPackageTagIds(pkgTags.map(pt => pt.tag_id));
 
-      // Courier groups
-      const { data: courierData } = await supabase
-        .from("courier_groups")
-        .select("id, code, name, logo_url")
-        .is("deleted_at", null);
-      if (courierData) setCourierGroupsList(courierData as CourierGroup[]);
+      // Courier groups now come from useCourierGroups() hook above — no need to fetch here.
 
       setLoading(false);
     } catch (err) {

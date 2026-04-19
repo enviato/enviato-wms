@@ -8,6 +8,7 @@ import { adminDelete } from "@/lib/admin-delete";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
+import { useCourierGroups, useAgents } from "@/shared/hooks/queries";
 import BatchBar from "@/shared/components/DataTable/BatchBar";
 import type { ColumnDef } from "@/shared/types/common";
 import ColumnHeaderMenu from "@/components/ColumnHeaderMenu";
@@ -100,8 +101,13 @@ export default function CustomersPage() {
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serverTotal, setServerTotal] = useState(0);
-  const [courierGroups, setCourierGroups] = useState<CourierGroup[]>([]);
-  const [agentsList, setAgentsList] = useState<AgentItem[]>([]);
+
+  /* Reference data — cached across pages via React Query.
+     See src/shared/hooks/queries/useReferenceData.ts */
+  const { data: courierGroupsRaw = [] } = useCourierGroups();
+  const { data: agentsListRaw = [] } = useAgents();
+  const courierGroups = courierGroupsRaw as unknown as CourierGroup[];
+  const agentsList = agentsListRaw as unknown as AgentItem[];
 
   /* Table state — now managed by useTableState hook */
   const table = useTableState({
@@ -216,17 +222,7 @@ export default function CustomersPage() {
         table.showError("No recipients found (query returned empty)");
       }
 
-      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, code, name").is("deleted_at", null);
-      if (grpError) {
-        logger.error("courier_groups query", grpError);
-      }
-      if (grpData) setCourierGroups(grpData as CourierGroup[]);
-
-      const { data: agentsData, error: agentsError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
-      if (agentsError) {
-        logger.error("agents query", agentsError);
-      }
-      if (agentsData) setAgentsList(agentsData as AgentItem[]);
+      // courier_groups and agents now fetched via React Query hooks above.
 
       setLoading(false);
     }

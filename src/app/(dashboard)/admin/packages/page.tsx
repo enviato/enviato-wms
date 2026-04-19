@@ -9,6 +9,13 @@ import { logger } from "@/shared/lib/logger";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
+import {
+  useCustomers,
+  useCourierGroups,
+  useAgents,
+  usePackageStatuses,
+  useTags,
+} from "@/shared/hooks/queries";
 import BatchBar from "@/shared/components/DataTable/BatchBar";
 import type { ColumnDef } from "@/shared/types/common";
 import ColumnHeaderMenu from "@/components/ColumnHeaderMenu";
@@ -130,10 +137,18 @@ export default function PackagesPage() {
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serverTotal, setServerTotal] = useState(0);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [courierGroups, setCourierGroups] = useState<CourierGroup[]>([]);
-  const [agentsList, setAgentsList] = useState<AgentItem[]>([]);
-  const [packageStatuses, setPackageStatuses] = useState<PackageStatus[]>([]);
+
+  /* Reference data — cached across pages via React Query.
+     First nav to any page using these hooks fetches; subsequent
+     nav within staleTime reads from cache (no network hit). */
+  const { data: customersRaw = [] } = useCustomers();
+  const { data: courierGroupsRaw = [] } = useCourierGroups();
+  const { data: agentsListRaw = [] } = useAgents();
+  const { data: packageStatusesRaw = [] } = usePackageStatuses();
+  const customers = customersRaw as unknown as Customer[];
+  const courierGroups = courierGroupsRaw as unknown as CourierGroup[];
+  const agentsList = agentsListRaw as unknown as AgentItem[];
+  const packageStatuses = packageStatusesRaw as unknown as PackageStatus[];
 
   /* Filter state */
   const [statusTab, setStatusTab] = useState<"all" | "in_warehouse" | "shipped">("all");
@@ -180,7 +195,8 @@ export default function PackagesPage() {
   const [batchStatusValue, setBatchStatusValue] = useState("");
   const [batchUpdating, setBatchUpdating] = useState(false);
   const [showBatchTagModal, setShowBatchTagModal] = useState(false);
-  const [tags, setTags] = useState<TagItem[]>([]);
+  const { data: tagsRaw = [] } = useTags();
+  const tags = tagsRaw as unknown as TagItem[];
   const [batchTagIds, setBatchTagIds] = useState<Set<string>>(new Set());
   const [showEditPopover, setShowEditPopover] = useState(false);
   const [batchEditField, setBatchEditField] = useState<"carrier" | "agent" | "weight">("carrier");
@@ -251,7 +267,12 @@ export default function PackagesPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, [dropdownCell]);
 
-  /* ───────── Data loading ───────── */
+  /* ───────── Data loading ─────────
+   * Reference data (customers, courier_groups, agents, statuses, tags)
+   * is now fetched via React Query hooks above. Only the main packages
+   * query remains here — it's page-specific and gets invalidated by
+   * user mutations rather than being a cache-friendly taxonomy fetch.
+   */
   useEffect(() => {
     async function loadData() {
       const { data: pkgData, count: pkgCount, error: pkgError } = await supabase
@@ -265,26 +286,6 @@ export default function PackagesPage() {
         setPackages(pkgData as PackageRow[]);
         if (pkgCount != null) setServerTotal(pkgCount);
       }
-
-      const { data: custData, error: custError } = await supabase.from("users").select("id, first_name, last_name, agent_id").eq("role", "customer").is("deleted_at", null);
-      if (custError) logger.error("customers query", custError);
-      if (custData) setCustomers(custData as Customer[]);
-
-      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, code, name, logo_url").is("deleted_at", null);
-      if (grpError) logger.error("courier_groups query", grpError);
-      if (grpData) setCourierGroups(grpData as CourierGroup[]);
-
-      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
-      if (agentError) logger.error("agents query", agentError);
-      if (agentData) setAgentsList(agentData as AgentItem[]);
-
-      const { data: statusData, error: statusError } = await supabase.from("package_statuses").select("*").is("deleted_at", null).order("sort_order");
-      if (statusError) logger.error("statuses query", statusError);
-      if (statusData) setPackageStatuses(statusData as PackageStatus[]);
-
-      const { data: tagData, error: tagError } = await supabase.from("tags").select("id, name, color").is("deleted_at", null).order("name");
-      if (tagError) logger.error("tags query", tagError);
-      if (tagData) setTags(tagData as TagItem[]);
 
       setLoading(false);
     }

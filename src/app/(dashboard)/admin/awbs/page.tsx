@@ -7,6 +7,7 @@ import { adminDelete } from "@/lib/admin-delete";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
+import { useCourierGroups, useAgents } from "@/shared/hooks/queries";
 import BatchBar from "@/shared/components/DataTable/BatchBar";
 import type { ColumnDef } from "@/shared/types/common";
 import { logger } from "@/shared/lib/logger";
@@ -116,8 +117,13 @@ export default function AwbsPage() {
   const [awbs, setAwbs] = useState<AwbRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serverTotal, setServerTotal] = useState(0);
-  const [courierGroups, setCourierGroups] = useState<{ id: string; name: string; code: string; type: string }[]>([]);
-  const [agentsList, setAgentsList] = useState<{ id: string; name: string; company_name: string | null; agent_code: string | null }[]>([]);
+
+  /* Reference data — cached across pages via React Query.
+     See src/shared/hooks/queries/useReferenceData.ts */
+  const { data: courierGroupsRaw = [] } = useCourierGroups();
+  const { data: agentsListRaw = [] } = useAgents();
+  const courierGroups = courierGroupsRaw as unknown as { id: string; name: string; code: string; type: string; logo_url?: string | null }[];
+  const agentsList = agentsListRaw as unknown as { id: string; name: string; company_name: string | null; agent_code: string | null }[];
 
   /* Filter state */
   const [statusTab, setStatusTab] = useState<"all" | "packing" | "in_transit" | "delivered">("all");
@@ -237,17 +243,7 @@ export default function AwbsPage() {
         })) as AwbRow[]);
       }
 
-      const { data: grpData, error: grpError } = await supabase.from("courier_groups").select("id, name, code, type, logo_url").is("deleted_at", null);
-      if (grpError) {
-        logger.error("courier_groups query", grpError);
-      }
-      if (grpData) setCourierGroups(grpData as { id: string; name: string; code: string; type: string; logo_url?: string | null }[]);
-
-      const { data: agentData, error: agentError } = await supabase.from("agents").select("id, name, company_name, agent_code").eq("status", "active").is("deleted_at", null).order("name");
-      if (agentError) {
-        logger.error("agents query", agentError);
-      }
-      if (agentData) setAgentsList(agentData as { id: string; name: string; company_name: string | null; agent_code: string | null }[]);
+      // courier_groups and agents now fetched via React Query hooks above.
 
       setLoading(false);
     }
