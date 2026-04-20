@@ -147,7 +147,11 @@ export async function POST(req: NextRequest) {
       authId = authUser.user.id;
     }
 
-    /* ── 6. Insert public.users row ── */
+    /* ── 6. Insert public.users row ──
+     * NOTE: role_v2 must be stamped explicitly. The legacy `role` column has a default
+     * but `role_v2` does not — leaving it NULL would re-create the HP5 anomaly that
+     * 021_role_v2_backfill.sql cleaned up (recipients invisible to RLS = 0 packages
+     * visible in the dashboard). Tier 6 Phase 10F. */
     const { data: newUser, error: insertError } = await admin
       .from("users")
       .insert({
@@ -159,6 +163,7 @@ export async function POST(req: NextRequest) {
         agent_id: agent_id || null,
         aliases: aliases || [],
         role: "customer",
+        role_v2: "CUSTOMER",
         is_active: is_active ?? true,
         org_id: profile.org_id,
       })
