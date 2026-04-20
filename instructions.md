@@ -1,6 +1,6 @@
 # ENVIATO WMS V2 — Development Instructions
 
-**Last Updated:** April 4, 2026
+**Last Updated:** April 19, 2026 (late — added RLS Authoring Rules section)
 
 ---
 
@@ -539,6 +539,124 @@ if (error) {
   const { data: fallback } = await supabase.from("table").select("col1, col2").single();
 }
 ```
+
+---
+
+## RLS AUTHORING RULES
+
+These rules came out of the Tier 6.0 RLS audit (2026-04-19) and the Phase 10A remediation. Every migration that touches RLS policies must follow them. The gold-standard reference is `supabase/migrations/016_users_update_with_check.sql` (as now on disk) — read it before writing any new policy migration.
+
+### Rule 1 — Every `UPDATE` policy needs an explicit `WITH CHECK`
+
+Default Postgres behavior: when `WITH CHECK` is omitted, it defaults to the `USING` expression. On any table where the row-author can privilege-escalate via a column edit (notably `users` — `role_v2`, `agent_id`, `role_id`), this default is a live exploit:
+
+- `USING (id = auth.uid())` allows the self-row's current state to pass the read check.
+- Default `WITH CHECK := USING` allows the self-row's *new* state to pass the write check — with any column values the caller wants.
+
+**Always write `WITH CHECK` explicitly.** Pin every privilege-carrying column via `NEW.<col> IS NOT DISTINCT FROM (SELECT public.auth_<col>())` (use `IS NOT DISTINCT FROM` for NULL-safe comparison). ORG_ADMIN (or equivalent trust tier) may be exempt via a disjunction:
+
+```sql
+WITH CHECK (
+  org_id = (SELECT public.auth_org_id())
+  AND (
+    (SELECT public.auth_role_v2()) = 'ORG_ADMIN'::public.user_role_v2
+    OR (
+      id = (SELECT auth.uid())
+      AND role_v2  IS NOT DISTINCT FROM (SELECT public.auth_role_v2())
+      AND agent_id IS NOT DISTINCT FROM (SELECT public.auth_agent_id())
+      AND role_id  IS NOT DISTINCT FROM (SELECT public.auth_role_id())
+    )
+  )
+)
+```
+
+### Rule 2 — Never use `FOR ALL` on a customer-facing platform
+
+`FOR ALL USING (org_id = auth_org_id())` reads like a read scope, but actually permits every in-org user to INSERT / UPDATE / DELETE regardless of role. On ENVIATO, this gave legacy customers write access to `org_settings`, `tags`, `label_templates`, `warehouse_locations`, `package_tags` (Tier 6.0 F-12).
+
+**Default pattern: split into four policies** (`FOR SELECT` + three write verbs, or `FOR INSERT/UPDATE/DELETE` if identical role gate):
+
+```sql
+-- Read: org-scoped
+CREATE POLICY <table>_select_v2 ON <table>
+  FOR SELECT TO authenticated
+  USING (org_id = (SELECT public.auth_org_id()));
+
+-- Write: role-gated
+CREATE POLICY <table>_write_v2 ON <table>
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    org_id = (SELECT public.auth_org_id())
+    AND (SELECT public.auth_role_v2()) IN ('ORG_ADMIN','WAREHOUSE_STAFF')
+  );
+-- plus UPDATE and DELETE with the same WITH CHECK / USING
+```
+
+Only use `FOR ALL` when the read and write authorization genuinely align across every role — almost never true on a customer-facing platform.
+
+### Rule 3 — Use SECURITY DEFINER helpers, not inline subqueries, for same-table lookups
+
+If a policy on `public.users` references `public.users` via an inline correlated subquery, Postgres re-enters RLS evaluation on the inner SELECT and throws `42P17 infinite recursion detected in policy for relation users`. Discovered live via 016a hotfix during Phase 10A.
+
+**Rule:** route any lookup against the policy's own table through a SECURITY DEFINER helper. The existing set:
+
+- `public.auth_org_id()` → caller's `org_id`
+- `public.auth_role_v2()` → caller's `role_v2`
+- `public.auth_agent_id()` → caller's `agent_id`
+- `public.auth_role_id()` → caller's `role_id` (custom role assignment) — **added via migration 016a**
+
+Wrap each call in `(SELECT helper())` so Postgres evaluates it as an InitPlan (once per query), not once per row:
+
+```sql
+USING (org_id = (SELECT public.auth_org_id()))  -- good: InitPlan
+USING (org_id = public.auth_org_id())           -- bad: re-evaluated per row
+```
+
+When adding a new helper, follow the same template — `LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public`, with `REVOKE ALL FROM PUBLIC` + `GRANT EXECUTE TO authenticated, service_role`. See migration 016 for the canonical example.
+
+### Rule 4 — Test every policy with live SQL impersonation before declaring it done
+
+Static review passed on F-1, F-2, F-3, F-5, F-12 — they all read reasonable. Live impersonation via `BEGIN … ROLLBACK` is what caught them. Every new or modified RLS policy ships with an impersonation test at the bottom of its migration file (as a comment), using this template:
+
+```sql
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"<user_uuid>","role":"authenticated"}',
+  true
+);
+
+-- 1. Positive: the thing this policy should allow
+SELECT ... ;                                -- expect rows
+-- 2. Negative: the attack this policy should deny
+UPDATE ... SET <priv_col>=... WHERE id = auth.uid();
+                                            -- expect 0 rows OR ERROR 42501
+-- 3. Cross-tenant negative
+UPDATE ... WHERE id = '<other-org-row>';    -- expect 0 rows
+
+ROLLBACK;
+```
+
+Two blocking behaviors to know:
+- `USING` rejects → 0 rows, silent success (command succeeded but affected no rows).
+- `WITH CHECK` rejects → `ERROR 42501: new row violates row-level security policy`.
+
+Both are valid "denied" outcomes; pick the right expectation per test case.
+
+### Rule 5 — Customer-tier roles need first-class `column = auth.uid()` policies
+
+If a role exists in `user_role_v2`, every user-facing table they read must have a policy that scopes rows to *that role's* key, not just the org. CUSTOMER scoping is `customer_id = auth.uid()` — NOT via `get_accessible_agent_ids()`. Scoping CUSTOMER through the agent helper would cross-leak packages between recipients of the same agent (violation of the owner's rule: "a recipient can only see their packages").
+
+**Rule of thumb when adding a role to the enum:** audit the policy set for the new role's scoping column before shipping. On ENVIATO, CUSTOMER was added to the enum without any policy referencing `customer_id = auth.uid()`, which made the entire customer surface unreachable by customers (F-4).
+
+### Rule 6 — Never bypass tenant isolation
+
+`org_id = auth_org_id()` goes on every USING and every WITH CHECK on every tenant-scoped table. Cross-tenant `org_id` rewrites are forbidden — the `WITH CHECK` must pin `org_id` to the caller's current org. Do not add carve-outs (e.g., "ORG_ADMIN of tenant A can see tenant B") without a full security review. If a super-admin capability is needed, it's a separate audited role, not a blanket read grant.
+
+### Rule 7 — Apply via Supabase MCP, commit on paper
+
+Phase 10A workflow that worked: write migration on disk → `apply_migration` via Supabase MCP (DDL runs on prod) → run `execute_sql` impersonation tests inside `BEGIN … ROLLBACK` → commit the migration file + the audit report to the repo. The repo must always match prod. When a hotfix (e.g., 016a) ships as a separate live migration, immediately consolidate it into the canonical file and note the consolidation in the file's header comment.
 
 ---
 

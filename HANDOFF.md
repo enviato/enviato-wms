@@ -1,9 +1,11 @@
 # ENVIATO WMS V2 — Reskin Handoff Document
 
-**Last Updated:** April 12, 2026
+**Last Updated:** April 19, 2026 (late — Phase 10A applied)
 **Supabase Project ID:** `ilguqphtephoqlshgpza`
 **Stack:** Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS + Supabase PostgreSQL
 **Figma Reference:** `/mnt/uploads/code.html` (user-uploaded HTML export of the Figma design)
+
+> 🟡 **Go-live status (2026-04-19, late):** Still blocked for multi-sided-platform rollout, but the three CRITICAL / HIGH in-tenant exploits (F-1, F-2, F-3, F-12) from the Tier 6.0 audit were **remediated live on 2026-04-19** via migrations 016, 017, 018 + hotfix 016a (now consolidated into 016 on disk). All Phase 10A attack paths are blocked by post-fix live impersonation tests. Cross-tenant isolation still holds. Remaining blockers are product-gated (Phase 10B — CUSTOMER read surface) and process (Phase 10F — recipient registration never assigns `role_v2`). See `GO-LIVE-READINESS.md` → Phase 10A/10B/10F and `docs/audits/2026-04-19-tier6-rls-audit.md` (still uncommitted). **HP5 anomaly flagged during re-test** — recipients see 0 packages due to `role_v2 = NULL` + no CUSTOMER branch in `get_accessible_agent_ids()`. Pre-existing bug, not a regression from today's work.
 
 ---
 
@@ -285,6 +287,157 @@ All modified files pass TypeScript syntax check (TS2307 module resolution errors
 
 ---
 
+## PHASE 10 — TIER 6.0 RLS AUDIT & REMEDIATION (April 19, 2026)
+
+### What happened
+
+**Morning:** Full threat-model audit of every production RLS policy across 13 tenant-scoped tables, with live SQL impersonation tests against seeded per-role users in org `00000000-0000-0000-0000-000000000001`. 12 findings, 2 CRITICAL (F-1, F-2). All test writes ran inside `BEGIN … ROLLBACK`.
+
+**Afternoon — Phase 10A applied live:** Migrations 016, 017, 018 landed via Supabase MCP. All Phase 10A attack paths are now blocked. All writes to production state today were DDL only (three migrations + one helper function). No policy rows were mutated.
+
+**Full report:** `docs/audits/2026-04-19-tier6-rls-audit.md` (uncommitted — should be committed alongside the 016/017/018 files).
+
+### Headline findings (12 total, 2 CRITICAL) — current status
+
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| F-1 | 🔴 CRITICAL | `users_update_v2` had no `WITH CHECK` → any authed user could self-promote to ORG_ADMIN. | ✅ Fixed (mig 016 + 016a hotfix) |
+| F-2 | 🔴 CRITICAL | Same mechanism → any user could reassign their own `agent_id` to steal another agent's data. | ✅ Fixed (mig 016 + 016a hotfix) |
+| F-3 | 🟠 HIGH | `packages_select_v2`'s `OR (agent_id IS NULL)` carve-out had no role gate. | ✅ Fixed (mig 017 — carve-out removed entirely) |
+| F-4 | 🟠 HIGH | CUSTOMER role in enum, but no RLS policy uses `customer_id = auth.uid()` — customer surface unreachable. | ⬜ Phase 10B |
+| F-12 | 🟠 HIGH | `FOR ALL` policies on `org_settings`, `tags`, `label_templates`, `warehouse_locations`, `package_tags` let any in-org user INSERT/UPDATE/DELETE. | ✅ Fixed (mig 018 — split + role-gated) |
+| F-5 | 🟡 MEDIUM | `invoice_lines` has no UPDATE/DELETE policy. | ⬜ Phase 10B |
+| F-6 | 🟡 MEDIUM | JWT claims shipped but helpers still do DB lookups. Slightly worsened by 016a adding a fourth DB-backed helper. | ⬜ Phase 10C |
+| F-7 | 🟡 MEDIUM | 10 of 14 prod users have `role_v2 = NULL`. **Now known to be the root cause of HP5.** | ⬜ Phase 10B + new 10F |
+| F-8 … F-11 | 🔵 LOW / INFO | documented in report §4 | ⬜ Phase 10E |
+
+**Cross-tenant isolation still holds.** No migration today changed cross-tenant behavior — cross-tenant SELECT, cross-tenant INSERT forgery, and cross-tenant self-move are all still blocked.
+
+---
+
+## PHASE 10A — APPLIED (April 19, 2026)
+
+Three migrations applied live via Supabase MCP. Order: 016 → 017 → 018. A runtime error on the first 016 draft triggered a hotfix (see 016a below).
+
+### Migration 016 — `users_update_with_check.sql`
+
+**What it does:** Adds explicit `WITH CHECK` to `users_update_v2`. Non-admin callers cannot change `role_v2`, `agent_id`, or `role_id`; their own-row update must keep those three columns identical to the current DB value. ORG_ADMIN remains unrestricted within their org. Cross-tenant moves are blocked by requiring `NEW.org_id = auth_org_id()` in the `WITH CHECK`.
+
+**Shape (final, consolidated):**
+
+```sql
+CREATE POLICY users_update_v2 ON public.users
+  FOR UPDATE TO authenticated
+  USING (
+    org_id = (SELECT public.auth_org_id())
+    AND (
+      (SELECT public.auth_role_v2()) = 'ORG_ADMIN'::public.user_role_v2
+      OR id = (SELECT auth.uid())
+    )
+  )
+  WITH CHECK (
+    org_id = (SELECT public.auth_org_id())
+    AND (
+      (SELECT public.auth_role_v2()) = 'ORG_ADMIN'::public.user_role_v2
+      OR (
+        id = (SELECT auth.uid())
+        AND role_v2  IS NOT DISTINCT FROM (SELECT public.auth_role_v2())
+        AND agent_id IS NOT DISTINCT FROM (SELECT public.auth_agent_id())
+        AND role_id  IS NOT DISTINCT FROM (SELECT public.auth_role_id())
+      )
+    )
+  );
+```
+
+### Hotfix 016a — `auth_role_id_helper_and_fix` (consolidated into 016 on disk)
+
+**Why it was needed:** The first draft of 016 used inline correlated subqueries like `(SELECT u.role_v2 FROM users u WHERE u.id = auth.uid())` inside `WITH CHECK`. That triggered runtime `42P17 infinite recursion detected in policy for relation users` on every user-row update, because the inner `SELECT` was itself RLS-filtered by `users_select_v2`, which recursively re-invoked the policy chain.
+
+**Fix:** Route the subqueries through SECURITY DEFINER helpers that bypass RLS. `auth_role_v2()` and `auth_agent_id()` already existed. We added `auth_role_id()`:
+
+```sql
+CREATE OR REPLACE FUNCTION public.auth_role_id()
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT role_id FROM public.users WHERE id = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION public.auth_role_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.auth_role_id() TO authenticated, service_role;
+```
+
+The on-disk 016 file was updated to the consolidated form after 016a shipped, so the repo matches prod. No separate `016a_…sql` file exists on disk — the hotfix was consolidated into 016.
+
+### Migration 017 — `packages_unassigned_role_gate.sql`
+
+**What it does:** Removed the `OR (agent_id IS NULL)` read carve-out from `packages_select_v2` entirely. The owner's rule ("packages must always be routed through an agent; unassigned means orphaned data") made the role-gate approach unnecessary — ORG_ADMIN can still see orphan rows through the baseline org-read path.
+
+### Migration 018 — `for_all_gate_split.sql`
+
+**What it does:** Split `FOR ALL` policies on five tables into `FOR SELECT` (org-scoped read) + `FOR INSERT/UPDATE/DELETE` (role-gated write).
+
+Gates applied:
+- `org_settings` + `warehouse_locations` = ORG_ADMIN only (per owner rule)
+- `tags` + `label_templates` + `package_tags` = ORG_ADMIN + WAREHOUSE_STAFF
+
+### Attack tests (all blocked after Phase 10A)
+
+| # | Attack | Expected | Result |
+|---|--------|----------|--------|
+| 1 | AGENT_STAFF `UPDATE users SET role_v2='ORG_ADMIN' WHERE id=auth.uid()` | Denied | ✅ `ERROR 42501 new row violates RLS policy` |
+| 2 | AGENT_STAFF `UPDATE users SET agent_id='<other-agent>' WHERE id=auth.uid()` | Denied | ✅ `ERROR 42501` |
+| 3 | Legacy-recipient `UPDATE org_settings SET value='...'` | Denied | ✅ 0 rows (USING rejects) |
+| 4 | Legacy-recipient `INSERT INTO tags (name, org_id) VALUES (...)` | Denied | ✅ `ERROR 42501` |
+| 5 | WAREHOUSE_STAFF `UPDATE warehouse_locations SET name='...'` | Denied (owner rule) | ✅ 0 rows |
+
+Note the two different blocking behaviors: `USING` rejects silently (0 rows); `WITH CHECK` rejects as `ERROR 42501`.
+
+### Happy paths
+
+| # | Path | Expected | Result |
+|---|------|----------|--------|
+| 1 | Recipient updates own `phone` | 1 row | ✅ 1 row |
+| 2 | ORG_ADMIN changes another user's `role_v2` to `WAREHOUSE_STAFF` | 1 row | ✅ 1 row |
+| 3 | WAREHOUSE_STAFF inserts a `tag` in-org | 1 row | ✅ 1 row |
+| 4 | ORG_ADMIN `UPDATE warehouse_locations SET name=…` | 7 rows | ✅ 7 rows |
+| 5 | Recipient `SELECT * FROM packages WHERE customer_id = auth.uid()` | 1+ rows | ⚠️ 0 rows — **pre-existing bug** (see HP5 below), not a regression |
+
+### HP5 anomaly — recipient sees 0 packages
+
+Root cause (two stacked issues, both pre-existing):
+
+1. **All 10 recipients in prod have `role_v2 = NULL`** (F-7 cohort). They never hit the CUSTOMER branch of any policy.
+2. **`get_accessible_agent_ids()` has no CUSTOMER branch.** Even if role were backfilled, the helper returns an empty set for CUSTOMER, and `packages_select_v2` joins through agent accessibility, so the customer sees nothing.
+
+**Correct fix for Phase 10B (migration 019):** scope CUSTOMER package visibility by `packages.customer_id = auth.uid()` directly, NOT by extending the agent helper. If we extended the helper, two recipients under the same agent would see each other's packages — violating the owner's rule "a recipient can only see their packages." Mirror the same pattern on `invoices.customer_id`, `awbs.customer_id`, and join through parent for `invoice_lines` / `package_photos`.
+
+HP5 is deferred to Phase 10B (migration 019) + new Phase 10F (registration-time role assignment). See GO-LIVE-READINESS.md for the full phase plan.
+
+### Remaining Phase 10 phases
+
+- **10B — Product-gated:** 019 (CUSTOMER read surface, F-4 + HP5 resolution), 020 (invoice_lines policies, F-5), 021 (role_v2 backfill, F-7).
+- **10C — JWT claim consumption:** 022 (auth helpers read from `auth.jwt() -> 'app_metadata'`, F-6). Also folds the new `auth_role_id()` into the JWT path.
+- **10D — CI test harness:** 023 (seed test users), pgTAP/Vitest harness gated on `supabase/migrations/**` changes.
+- **10E — Deferred hardening:** 024 (`FORCE ROW LEVEL SECURITY` on tenant tables, F-9).
+- **10F — Recipient registration fix (new):** update `src/app/api/create-recipient/route.ts` to set `role_v2 = 'CUSTOMER'` at creation; add `CHECK (role_v2 IS NOT NULL)` after the 021 backfill completes. Prevents future NULL-role rows from silently breaking customer visibility.
+
+### Pending product answers before Phase 10B can ship
+
+Six open questions documented in §6 of the audit report. HP5 already narrowed Q1 (favor `customer_id = auth.uid()` direct-scope on 019).
+
+### Next actions for whoever picks this up
+
+1. Commit the audit report + migrations 016/017/018 to the repo. They are currently on disk but uncommitted.
+2. Spot-check that the 10 NULL-role users in prod are all recipients (HP5 investigation indicates yes, but confirm via `SELECT id, first_name, last_name, customer_id FROM users WHERE role_v2 IS NULL`).
+3. Write migration 021 (`role_v2 = 'CUSTOMER'` backfill on those 10 rows) — apply in the same session as 019.
+4. Write migration 019 using `customer_id = auth.uid()` direct-scope (NOT by extending `get_accessible_agent_ids()`). Cover packages, invoices, awbs, invoice_lines (via parent invoice join), package_photos (via parent package join).
+5. Fix `src/app/api/create-recipient/route.ts` to set `role_v2 = 'CUSTOMER'` at row creation — Phase 10F.
+6. Re-run HP5 after 019 + 021 land — expect `SELECT ... WHERE customer_id = auth.uid()` to return rows for Maria Santos (ENV-00004).
+7. Get the remaining product answers before touching 020 / 022.
+
+---
+
 ## REMAINING WORK (NOT YET RESKINNED)
 
 ### Pages to Reskin:
@@ -412,9 +565,20 @@ All modified files pass TypeScript syntax check (TS2307 module resolution errors
 ## ADDITIONAL DOCUMENTATION
 
 - `MODULARIZATION.md` — **Phase 7 roadmap** (COMPLETE): full modular architecture strategy, target directory structure, 10 module definitions, 4 implementation phases (7A–7D), migration rules, progress tracker.
-- `GO-LIVE-READINESS.md` — **76 tracked issues** across all pages (**52 completed**, 24 remaining), prioritized P0–P3, Phases 1–8.5 complete, **Phase 9 (Production Audit)** with prioritized remediation plan, database changes documented
-- `architecture.md` — Modularization overview, dropdown/popover architecture, overflow context map, z-index layer system, component inventory, **standardized page layout**, lessons learned (23 items), **deployment architecture** (Vercel config, build history, rendering strategy)
-- `instructions.md` — Development guidelines for adding dropdowns, modularization conventions, **standardized page layout templates**, CSS class usage guide, overflow rules, z-index conventions, general conventions
-- `css-architecture.md` — CSS custom properties reference, overflow contexts & dropdown implications, CSS class families, **standardized page layout styles**, animations, Tailwind configuration
+- `GO-LIVE-READINESS.md` — Original P0–P3 tracker **76/76 complete**, Phases 1–9 complete. **Phase 10A (Tier 6.0 RLS CRITICAL) COMPLETE** 2026-04-19. 12 findings, 5 now fixed (F-1, F-2, F-3, F-12, partial F-7 scope). 5-phase remediation plan now 6-phase with new Phase 10F (recipient registration fix surfaced by HP5).
+- `docs/audits/2026-04-19-tier6-rls-audit.md` — **NEW (uncommitted)** — Full Tier 6.0 RLS policy threat-model audit. §0 TL;DR, §1 system model, §2 threat model matrix per table, §3 live impersonation test results (13 scenarios, all writes rolled back), §4 12 findings with exploit detail, §5 confirmed-good patterns, §6 6 open product questions, §7 coverage gaps, §8 5-phase remediation plan with migration filenames, Appendix A policies inventory, Appendix B test runbook.
+- `architecture.md` — Modularization overview, dropdown/popover architecture, overflow context map, z-index layer system, component inventory, **standardized page layout**, lessons 19–28 (deployment/Suspense/security + RLS authoring rules including SECURITY DEFINER helper rule from 016a hotfix), **deployment architecture**, **RLS policy architecture** section (helper functions table now includes `auth_role_id()`), **multi-tenant architecture** section describing N-deep agent tree + 2-party invoice privacy + impersonation-as-separate-capability.
+- `instructions.md` — Development guidelines for adding dropdowns, modularization conventions, **standardized page layout templates**, CSS class usage guide, overflow rules, z-index conventions, general conventions, **RLS AUTHORING RULES** section.
+- `css-architecture.md` — CSS custom properties reference, overflow contexts & dropdown implications, CSS class families, **standardized page layout styles**, animations, Tailwind configuration.
+- `supabase/migrations/016_users_update_with_check.sql` — **APPLIED 2026-04-19.** Consolidated with 016a hotfix. F-1, F-2.
+- `supabase/migrations/017_packages_unassigned_role_gate.sql` — **APPLIED 2026-04-19.** F-3.
+- `supabase/migrations/018_for_all_gate_split.sql` — **APPLIED 2026-04-19.** F-12.
 
-**Start here when resuming work:** Read `GO-LIVE-READINESS.md` first for the full issue tracker and Phase 9 audit remediation plan, then `architecture.md` for technical patterns (especially lessons 19–23 on deployment, Suspense, and security), then `MODULARIZATION.md` for module structure. The packages page (`admin/packages/page.tsx`) is the gold standard — all other pages should match its patterns.
+**Start here when resuming work (tomorrow):**
+1. Read `GO-LIVE-READINESS.md` → Phase 10 for the current blocker state. Phase 10A is done; focus is on 10B (019 CUSTOMER read surface, 020 invoice_lines, 021 role_v2 backfill) and 10F (recipient registration fix). HP5 investigation narrowed 019's shape — use `customer_id = auth.uid()` direct-scope, NOT `get_accessible_agent_ids()` extension.
+2. Read the "PHASE 10A — APPLIED" section of this HANDOFF for the attack-test / happy-path state, and the HP5 root cause summary.
+3. Read `docs/audits/2026-04-19-tier6-rls-audit.md` end-to-end before writing 019/020/021. §3 shows the impersonation SQL template you'll use to verify each new migration.
+4. Read `architecture.md` RLS Policy Architecture + lessons 24–28. Lesson 28 (SECURITY DEFINER helpers break RLS recursion) is the key takeaway from today's 016a hotfix — any future policy that reads from `public.users` must route through a helper.
+5. `MODULARIZATION.md` for module structure.
+
+The packages page (`admin/packages/page.tsx`) is the gold standard for UI patterns. For RLS, migrations 016/017/018 as now on disk establish the gold-standard policy family: explicit `WITH CHECK` with `IS NOT DISTINCT FROM` helper subqueries, `FOR ALL` always split into `FOR SELECT` + role-gated writes, every policy tested via `BEGIN … ROLLBACK` impersonation.

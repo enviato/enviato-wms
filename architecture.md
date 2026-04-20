@@ -1,7 +1,9 @@
 # ENVIATO WMS V2 — Architecture Document
 
-**Last Updated:** April 12, 2026
+**Last Updated:** April 19, 2026 (late — Phase 10A applied)
 **Stack:** Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS + Supabase PostgreSQL
+
+> **Security posture note (2026-04-19, late):** ENVIATO is a **customer-facing, multi-sided, multi-tenant platform** — CUSTOMER, AGENT_STAFF, and AGENT_ADMIN roles are untrusted consumers, not internal staff. Tenants are fully walled off from each other; within a tenant, agents form an N-deep tree with strict subtree visibility rules. Every RLS policy must be authored with a hostile-user threat model. The Tier 6.0 RLS audit surfaced 2 CRITICAL in-tenant privilege-escalation paths; Phase 10A migrations (016 + 016a hotfix, 017, 018) landed live on 2026-04-19 and all attack paths are now blocked. See the **RLS Policy Architecture**, **Multi-Tenant Architecture**, and lessons 24–28 sections below.
 
 ---
 
@@ -319,6 +321,206 @@ All admin pages import: `Search`, `Bell`, `SlidersHorizontal`, `Plus`, `X`, `Che
 22. **Admin API routes using service role must verify record ownership.** When an API route uses `supabaseAdmin` (service role) to bypass RLS, it MUST verify the target record's `org_id` matches the authenticated user's org before mutating. Pattern: fetch the record first with the anon client (which respects RLS), confirm it exists and belongs to the user's org, then proceed with the admin client mutation.
 
 23. **Standardize role checks on `role_v2`, never `role`.** The legacy `role` column may be stale or unpopulated for new users. All server-side role checks must use `role_v2` with values `ORG_ADMIN` or `WAREHOUSE_STAFF` (uppercase). Audit any `profile.role` references.
+
+24. **Every `UPDATE` policy on a table with self-mutable sensitive columns needs an explicit `WITH CHECK`.** In Postgres, `WITH CHECK` defaults to the `USING` expression when omitted. For most tables that's fine because `USING` is restrictive enough. But on `users` (and any other table where a row owns its own privilege level), `USING (id = auth.uid())` is a permissive check: the row owner can rewrite any column, including `role_v2`, `agent_id`, `customer_id`, `org_id`. Tier 6.0 F-1 and F-2 were both a missing `WITH CHECK`. The rule: on any table where the row-author can privilege-escalate via a column edit, the `UPDATE` policy must have a `WITH CHECK` that forbids `NEW.<sensitive_col> IS DISTINCT FROM OLD.<sensitive_col>` unless the caller is ORG_ADMIN (or equivalent trust tier). Write the `WITH CHECK` explicitly even when it duplicates the `USING` — it documents intent and prevents future regressions.
+
+25. **`FOR ALL` policies quietly grant INSERT/UPDATE/DELETE to every matching caller.** A policy like `CREATE POLICY x ON t FOR ALL USING (org_id = auth_org_id())` reads like a read scope but actually permits every in-org user to write, regardless of role. On ENVIATO that meant legacy customers could INSERT/UPDATE/DELETE on `org_settings`, `tags`, `label_templates`, `warehouse_locations`, `package_tags` (Tier 6.0 F-12). The rule: default to a split — `FOR SELECT` org-scoped read + a separate `FOR INSERT/UPDATE/DELETE` role-gated write. Only use `FOR ALL` when every role with in-org read is also authorized to write — which is almost never true on a customer-facing platform.
+
+26. **CUSTOMER / consumer-tier roles need first-class `column = auth.uid()` policies.** If a role exists in the enum, every user-facing table they read must have a policy that scopes rows to *that role's* key, not just the org. On ENVIATO, `CUSTOMER` had zero policies referencing `customer_id = auth.uid()`, so the entire customer-facing surface (packages / invoices / awbs / photos) was unreachable by the very users it was built for (Tier 6.0 F-4). Audit the enum against the actual policy coverage before adding any role to the product surface.
+
+27. **Test RLS with live SQL impersonation before declaring a policy good.** Static review missed F-1, F-2, F-3, F-5, F-12 — they all read reasonable. The confirmation came from `BEGIN; SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims', '{"sub":"<uuid>","role":"authenticated"}', true); <attempt exploit>; ROLLBACK;` run via Supabase MCP. Every new or modified RLS policy should ship with a corresponding impersonation test in the CI harness (Phase 10D). Policy diffs without tests are one missed `WITH CHECK` from re-exploit.
+
+28. **A policy that reads from its own table must route through a SECURITY DEFINER helper.** If an `UPDATE` / `INSERT` policy on `public.users` references `users` via an inline correlated subquery (e.g., `(SELECT u.role_v2 FROM users u WHERE u.id = auth.uid())`), Postgres enters the RLS evaluation loop again on the inner SELECT, and the `users_select_v2` policy re-invokes the chain. Result: `ERROR 42P17: infinite recursion detected in policy for relation users` at runtime — static review misses it. Fix: wrap the lookup in a SECURITY DEFINER function with `SET search_path = public` that bypasses RLS. `auth_org_id()`, `auth_role_v2()`, `auth_agent_id()`, and `auth_role_id()` (added via migration 016a hotfix) all follow this pattern. Rule of thumb: **never reference a table inside its own policy body without a SECURITY DEFINER wrapper.** Apply the same pattern to any future self-referential policy (e.g., a tree-traversal `agent_closure` read policy that needs to check the caller's own agent subtree).
+
+---
+
+## RLS POLICY ARCHITECTURE
+
+### Threat model
+
+ENVIATO is a customer-facing multi-sided platform. The roles in `user_role_v2` break into three trust tiers:
+
+| Tier | Roles | Trust posture |
+|------|-------|---------------|
+| Internal staff | `ORG_ADMIN`, `WAREHOUSE_STAFF` | Trusted — can read/write across the org within their role's scope |
+| Agent users | `AGENT_ADMIN`, `AGENT_STAFF` | Untrusted consumers — scoped to their own agent's customers/packages/invoices/AWBs |
+| End users | `CUSTOMER` | Untrusted consumers — scoped to their own `customer_id` records only |
+
+**Hostile-user assumption:** Every authenticated user outside the "internal staff" tier must be assumed to attempt privilege escalation. That means:
+
+- Any column that determines tenancy (`org_id`), role (`role_v2`), or data ownership (`agent_id`, `customer_id`) is a **privilege-carrying column** and must not be self-mutable below the ORG_ADMIN tier.
+- Any `OR` branch that broadens visibility (e.g., `OR (agent_id IS NULL)`) must be gated on the role list that's allowed to see it.
+- Cross-tenant isolation (`org_id` enforcement) is necessary but not sufficient — in-tenant trust is not uniform.
+
+### Policy shape (target state post Phase 10A)
+
+For each tenant-scoped table, the policy family should look like:
+
+```
+-- READ: org-scoped, optionally further narrowed by role or owner column
+CREATE POLICY <table>_select ON <table>
+  FOR SELECT TO authenticated
+  USING (
+    org_id = auth_org_id() AND (
+      auth_role_v2() IN ('ORG_ADMIN', 'WAREHOUSE_STAFF')      -- internal staff: full org read
+      OR (auth_role_v2() IN ('AGENT_ADMIN', 'AGENT_STAFF')
+          AND agent_id = ANY(get_accessible_agent_ids()))      -- agent users: their agent's rows
+      OR (auth_role_v2() = 'CUSTOMER'
+          AND customer_id = auth.uid())                        -- customers: their own rows
+    )
+  );
+
+-- WRITE: role-gated, with explicit WITH CHECK forbidding privilege-carrying column mutation
+CREATE POLICY <table>_insert ON <table>
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    org_id = auth_org_id()
+    AND auth_role_v2() IN ('ORG_ADMIN', 'WAREHOUSE_STAFF')
+  );
+
+CREATE POLICY <table>_update ON <table>
+  FOR UPDATE TO authenticated
+  USING (
+    org_id = auth_org_id()
+    AND auth_role_v2() IN ('ORG_ADMIN', 'WAREHOUSE_STAFF')
+  )
+  WITH CHECK (
+    org_id = auth_org_id()
+    AND NEW.org_id = OLD.org_id        -- forbid cross-tenant move
+    -- additional "NEW.col IS NOT DISTINCT FROM OLD.col" lines per privilege-carrying column
+  );
+
+CREATE POLICY <table>_delete ON <table>
+  FOR DELETE TO authenticated
+  USING (
+    org_id = auth_org_id()
+    AND auth_role_v2() IN ('ORG_ADMIN', 'WAREHOUSE_STAFF')
+  );
+```
+
+**Do not use `FOR ALL`** unless the single policy genuinely fits every verb, which for a multi-sided platform it almost never does.
+
+### Helper functions
+
+| Function | Purpose | Current impl | Target impl (Phase 10C) |
+|---------|---------|--------------|-------------------------|
+| `auth_org_id()` | Returns caller's `org_id` | SECURITY DEFINER DB lookup on `users` per call | Read from `auth.jwt() -> 'app_metadata' ->> 'org_id'` |
+| `auth_role_v2()` | Returns caller's `role_v2` | SECURITY DEFINER DB lookup on `users` per call | Read from `auth.jwt() -> 'app_metadata' ->> 'role_v2'` |
+| `auth_agent_id()` | Returns caller's `agent_id` | SECURITY DEFINER DB lookup on `users` per call | Read from `auth.jwt() -> 'app_metadata' ->> 'agent_id'` |
+| `auth_role_id()` | Returns caller's `role_id` (custom role assignment). **Added via migration 016a hotfix (2026-04-19)** to break a 42P17 infinite-recursion error that hit when `WITH CHECK` on `users_update_v2` used inline correlated subqueries against `users`. | SECURITY DEFINER DB lookup on `users` per call | Read from `auth.jwt() -> 'app_metadata' ->> 'role_id'` |
+| `get_accessible_agent_ids()` | Returns the set of agent IDs the caller can see | Branches on AGENT_ADMIN (returns descendants via `agent_closure`), AGENT_STAFF (returns own agent_id), ORG_ADMIN / WAREHOUSE_STAFF (returns all in-org agents). **No CUSTOMER branch — by design**, because customer visibility is scoped by `customer_id = auth.uid()` not via agent accessibility (see HP5 finding 2026-04-19). | Same, but input comes from JWT claims rather than DB lookup |
+| `user_has_permission(key)` | Checks a permission key against `role_permission_defaults` + `user_permissions` | DB lookup | Eventually cache permission bitset in JWT |
+
+**Constraint on helper changes:** All five `auth_*` helpers are referenced by many policies. Changing their return contract (e.g., adding arguments) forces a cascade of policy rewrites. Prefer adding new helpers for new shapes rather than mutating existing ones.
+
+**Why all four `auth_*` helpers use SECURITY DEFINER:** Any policy on `public.users` that needs to compare `NEW.<col>` to the caller's current value must look up the current value from `public.users`. If that lookup goes through normal RLS, `users_select_v2` fires recursively and Postgres bails out with `42P17 infinite recursion detected in policy for relation users`. SECURITY DEFINER bypasses RLS for the lookup. See lesson 28.
+
+### Impersonation test runbook
+
+Every new or modified RLS policy must be tested against each role before merge. Template:
+
+```sql
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"<user_uuid>","role":"authenticated","app_metadata":{"org_id":"<org_uuid>","role_v2":"<ROLE>"}}',
+  true
+);
+
+-- 1. Positive: the thing this policy should allow
+SELECT ... ;  -- expect rows / success
+
+-- 2. Negative: the thing this policy should deny
+UPDATE ... SET <privilege_col> = <attacker_value> WHERE id = auth.uid();
+  -- expect 0 rows affected or error
+
+-- 3. Cross-tenant negative: same action against a row in a different org
+UPDATE ... WHERE id = '<other_org_row>';
+  -- expect 0 rows affected
+
+ROLLBACK;
+```
+
+See §3 of `docs/audits/2026-04-19-tier6-rls-audit.md` for 13 worked examples covering each role × each CRITICAL/HIGH finding.
+
+### Seed users (test & prod)
+
+The audit used these seeded users for impersonation (org `00000000-0000-0000-0000-000000000001`):
+
+| UUID | role_v2 | Login | Purpose |
+|------|---------|-------|---------|
+| `4109f9a3-…` | ORG_ADMIN | lessaenterprises@gmail.com | Happy-path internal-staff tests |
+| `a0000000-…-0020` | WAREHOUSE_STAFF | john.warehouse | Internal-staff tests for warehouse-only routes |
+| `2e5f8d15-…` | AGENT_STAFF | platinumcorp1 | Most common attacker model (logged-in agent user attempts self-escalation) |
+| `a0000000-…-0001` | `NULL` | maria.santos | Legacy cohort — tests the role_v2-is-NULL fallback branches |
+
+**No AGENT_ADMIN or true CUSTOMER seed users exist in prod yet.** The AGENT_ADMIN branch of `get_accessible_agent_ids()` and every `CUSTOMER` policy is currently **untested against real data**. Phase 10D migration `023_rls_test_fixtures.sql` adds test users for both.
+
+### Migration numbering convention
+
+- `001`–`015` — Schema, permission system, performance (Tier 5) migrations. All applied.
+- `016` — Phase 10A users `WITH CHECK` (F-1, F-2). **Applied 2026-04-19.** Consolidates hotfix `016a` (SECURITY DEFINER `auth_role_id()` helper + switched inline subqueries to helper calls to avoid 42P17 recursion) into a single file on disk.
+- `017` — Phase 10A packages unassigned carve-out removal (F-3). **Applied 2026-04-19.**
+- `018` — Phase 10A `FOR ALL` split on 5 settings tables (F-12). **Applied 2026-04-19.**
+- `019`–`021` — Phase 10B product-gated fixes (CUSTOMER read surface, invoice_lines policies, role_v2 backfill). Not yet written.
+- `022` — Phase 10C JWT claim consumption. Folds the new `auth_role_id()` into the JWT path.
+- `023` — Phase 10D test fixtures.
+- `024` — Phase 10E `FORCE ROW LEVEL SECURITY`.
+
+**Rule:** Every migration that changes an RLS policy must ship with a corresponding impersonation test in the harness (once Phase 10D lands). Until then, attach the test SQL as a comment at the top of the migration file. Migration 016 as now on disk is the reference for this: its bottom-of-file comment block has four BEGIN/ROLLBACK test blocks (two attack cases + two happy-path cases).
+
+---
+
+## MULTI-TENANT ARCHITECTURE
+
+ENVIATO is a **multi-tenant SaaS**. Each tenant is an `organizations` row with a unique `org_id`. Every user row belongs to exactly one tenant, and cross-tenant visibility is **always zero** — a global admin at Tenant A does NOT see data in Tenant B. (The product does not currently have a super-admin role that spans tenants; if one is added, it will be a separate, audited capability, not a blanket read grant.)
+
+Within a tenant, two hierarchies intersect:
+
+1. **Agent tree.** Agents form an N-deep tree per tenant, stored as adjacency edges in `agent_edges` and flattened (for efficient subtree queries) in `agent_closure`. An AGENT_ADMIN can see packages, invoices, and AWBs for every agent in their subtree (themselves + descendants). An AGENT_STAFF sees only their own agent's rows. Packages cascade **down** the subtree: when package P is assigned to agent A, every ancestor of A's AGENT_ADMIN can see it.
+2. **Customer ownership.** Each `packages` / `invoices` / `awbs` row has a `customer_id` that points to the `users.id` of the recipient (the end customer). A CUSTOMER sees only rows where `customer_id = auth.uid()` — NOT rows for other recipients of the same agent. This is the design rule that forces migration 019 to use direct `customer_id` scoping rather than extending `get_accessible_agent_ids()` with a CUSTOMER branch.
+
+### Package visibility (by role)
+
+| Role | Sees |
+|------|------|
+| ORG_ADMIN | All in-org packages |
+| WAREHOUSE_STAFF | All in-org packages |
+| AGENT_ADMIN | Packages where `agent_id ∈ subtree(own agent)` |
+| AGENT_STAFF | Packages where `agent_id = own agent_id` |
+| CUSTOMER | Packages where `customer_id = auth.uid()` only |
+
+### Invoice privacy (strict two-party)
+
+Invoices are **strictly two-party**: a given invoice is visible to exactly one agent hierarchy (issuer side) and exactly one customer (recipient side). Even the global ORG_ADMIN does not automatically see every invoice — the default policy should scope invoice read to `org_id = auth_org_id() AND (issuer-side OR recipient-side)`. No blanket "ORG_ADMIN sees all invoices" carve-out. If finance needs a blanket view, that's a separate explicit capability (e.g., a `FINANCE_ADMIN` role or a dedicated audit surface), not a side-effect of being ORG_ADMIN.
+
+**Implication for migration 020 (invoice_lines):** the UPDATE / DELETE policies must mirror invoice visibility. A WAREHOUSE_STAFF user should NOT be able to edit invoice lines they cannot see.
+
+### Impersonation is a separate capability
+
+When product says "a global admin can see what X sees," that is an **impersonation** capability — a distinct, audited action with its own RLS and logging — not a visibility rule. Impersonation should:
+
+- Flip the caller's effective `role_v2` / `agent_id` / `customer_id` for the duration of the impersonation session.
+- Write an audit row to an `impersonation_events` table (not yet built).
+- Be gated on ORG_ADMIN (or a narrower capability) + require an explicit "start impersonation" action.
+
+This is deliberately NOT what `get_accessible_agent_ids()` does. That helper returns "what this user can see in their own identity," not "what this user can see after impersonating someone else."
+
+### Tenant walls
+
+Tenants are fully walled off. Specifically:
+
+- `org_id` is a required column on every tenant-scoped table.
+- Every RLS policy's USING and WITH CHECK starts with `org_id = auth_org_id()`.
+- Cross-tenant `org_id` rewrites on any row are forbidden (`WITH CHECK` pins `org_id` to the caller's current org).
+- Foreign keys across tables never cross tenants — a package in Tenant A cannot reference a customer in Tenant B. This is enforced by FK + RLS, not by FK alone.
+
+The Tier 6.0 audit confirmed cross-tenant isolation holds today. All CRITICAL findings (F-1, F-2) were strictly in-tenant. Phase 10A did not change cross-tenant posture.
+
+### Delivery driver (narrow role)
+
+Out of scope for the current RLS work but worth flagging: the product will add a `DELIVERY_DRIVER` role in the future. Its visibility rule is deliberately narrow — a driver sees only the packages on their current manifest, with no agent-tree ancestry, no invoice visibility, and no customer detail beyond the delivery address. When this role lands, it gets its own first-class scoping policy (manifest-based, not agent-based).
 
 ---
 
