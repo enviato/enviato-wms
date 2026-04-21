@@ -1,0 +1,71 @@
+# supabase/config.toml — Local Supabase stack config
+#
+# Required by `supabase start` (used in CI by .github/workflows/rls-tests.yml).
+# Kept minimal — only the bits the RLS test job actually depends on are set
+# explicitly; everything else uses the CLI's defaults.
+#
+# Project ref is intentionally left as the prod ref so `supabase link` keeps
+# working from a developer's machine. CI never runs `supabase link`; it just
+# runs `supabase start` against this config and `supabase db reset` to load
+# migrations + seed.sql.
+
+project_id = "ilguqphtephoqlshgpza"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# Postgres major version — must match prod (verified 2026-04-20: 17.6.1.063).
+major_version = 17
+
+[db.pooler]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+# The custom_access_token_hook (migration 015) is invoked by GoTrue at sign-in
+# to inject role_v2 / org_id / agent_id into the JWT. CI doesn't actually
+# sign anyone in — the RLS tests fake the JWT via set_config() — so we leave
+# the hook configuration off here. If a future test path needs real auth,
+# wire this hook block in then.
+# [auth.hook.custom_access_token]
+# enabled = true
+# uri = "pg-functions://postgres/public/custom_access_token_hook"
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+
+[functions]
+# No edge functions are exercised by the RLS tests.

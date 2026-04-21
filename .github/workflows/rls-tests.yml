@@ -1,0 +1,145 @@
+# .github/workflows/rls-tests.yml
+#
+# Runs the RLS regression suite (tests/rls/*.sql) against a freshly migrated +
+# seeded Supabase stack on every PR / push that touches RLS-relevant code.
+#
+# Why this workflow exists:
+#   The Tier 6 audit (2026-04-19) shipped policies (migrations 016-024) that
+#   close real cross-tenant + self-escalation holes. tests/rls/ encodes those
+#   policies as ROLLBACK-only PostgreSQL scripts. Running them locally before
+#   every release is brittle; this workflow makes them gate every PR.
+#
+# Trigger scope (intentionally narrow — the suite isn't free to run):
+#   - Anything under supabase/migrations/  (schema or policy change)
+#   - Anything under tests/rls/             (test change)
+#   - This workflow file itself             (CI config drift)
+#   - supabase/seed.sql                     (fixtures change)
+#   - supabase/config.toml                  (stack config change)
+
+name: RLS Regression Tests
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/seed.sql"
+      - "supabase/config.toml"
+      - "tests/rls/**"
+      - ".github/workflows/rls-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/seed.sql"
+      - "supabase/config.toml"
+      - "tests/rls/**"
+      - ".github/workflows/rls-tests.yml"
+  # Allow manual runs from the Actions tab when investigating a regression.
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same ref when a new commit lands — saves CI
+# minutes on rapid pushes.
+concurrency:
+  group: rls-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rls-tests:
+    name: RLS regression suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The Supabase CLI ships everything we need: a Postgres 17 container,
+      # migration runner, and seed loader. Pinning the version means CI
+      # behaves the same as local `supabase` invocations.
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 1.200.3
+
+      - name: Cache Supabase Docker images
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/supabase
+          key: supabase-cli-${{ runner.os }}-${{ hashFiles('supabase/config.toml') }}
+          restore-keys: |
+            supabase-cli-${{ runner.os }}-
+
+      # `supabase start` boots the local stack (Postgres + GoTrue + PostgREST
+      # + Studio + Inbucket) using supabase/config.toml. We only need
+      # Postgres, but the CLI doesn't currently expose a Postgres-only mode,
+      # and the boot is fast enough on GHA (~30-45s).
+      - name: Start Supabase stack
+        run: supabase start
+        working-directory: ${{ github.workspace }}
+
+      # `supabase db reset` runs every migration in supabase/migrations/ in
+      # filename order, then runs supabase/seed.sql. After this, the local
+      # DB has the same schema as prod plus the test fixtures.
+      - name: Reset DB (run migrations + seed.sql)
+        run: supabase db reset
+        working-directory: ${{ github.workspace }}
+
+      # Sanity: confirm seed loaded what the suite expects, fail fast with
+      # a clear error if the seed regressed before we even start the suite.
+      - name: Verify seed fixtures
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 54322 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT
+                  (SELECT COUNT(*) FROM public.users WHERE id IN (
+                    '4109f9a3-9c51-4096-91de-09223cbd9203',
+                    'a0000000-0000-0000-0000-000000000001',
+                    'a0000000-0000-0000-0000-000000000007',
+                    'a0000000-0000-0000-0000-000000000020',
+                    '2e5f8d15-ba91-48d3-bc9d-4a1a55c346d9'
+                  )) AS expected_users_5,
+                  (SELECT COUNT(*) FROM public.packages
+                    WHERE customer_id = 'a0000000-0000-0000-0000-000000000007') AS ana_pkgs_2,
+                  (SELECT COUNT(*) FROM public.invoices
+                    WHERE customer_id = 'a0000000-0000-0000-0000-000000000007') AS ana_invs_2,
+                  (SELECT COUNT(*) FROM public.role_permissions
+                    WHERE permission_key = 'invoices:edit'
+                      AND role_id = '1885e100-1cb9-4166-94f1-aa640481128b') AS org_admin_invoices_edit_1;" \
+            | tee seed-verify.out
+          # If any of the expected counts is wrong, fail with a useful diff.
+          grep -E "^\s+5 \|\s+2 \|\s+2 \|\s+1\s*$" seed-verify.out \
+            || (echo "::error::Seed fixtures don't match expected shape (see counts above)" && exit 1)
+
+      # Run the suite via run_all.sql — that file uses \i to chain each test.
+      # ON_ERROR_STOP=1 is critical: every assertion in tests/rls/* uses
+      # RAISE EXCEPTION on failure, so without -v ON_ERROR_STOP=1 psql would
+      # print the error and continue, masking failures.
+      - name: Run RLS regression suite
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 54322 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -f tests/rls/run_all.sql
+
+      # Print the active policy set on success — useful when reviewing PR
+      # logs to confirm a policy actually changed (or didn't) the way the
+      # author claims.
+      - name: Dump active RLS policies (for PR reviewer)
+        if: success()
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 54322 -U postgres -d postgres \
+            -c "SELECT schemaname, tablename, policyname, cmd
+                  FROM pg_policies
+                 WHERE schemaname = 'public'
+                 ORDER BY tablename, policyname;"
+
+      # Always tear down so the runner is reusable on self-hosted infra.
+      - name: Stop Supabase stack
+        if: always()
+        run: supabase stop --no-backup
+        working-directory: ${{ github.workspace }}
