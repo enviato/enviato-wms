@@ -71,6 +71,7 @@ If you add a test for a new finding, prefer computing ground truth at test time 
 | `F4_customer_read_surface.sql` | CUSTOMER sees exactly their own live (non-deleted) packages / invoices / AWBs / lines / photos (HP5 + F-11) | 019 + 024 |
 | `F5_invoice_lines_mutations.sql` | ORG_ADMIN UPDATE/DELETE `invoice_lines` works; CUSTOMER/staff-without-permission denied | 020 |
 | `F7_role_v2_backfill.sql` | Invariant: no active customer_number user has NULL `role_v2`; column is NOT NULL; INSERT without `role_v2` raises `not_null_violation` | 021 + create-recipient route + 023 |
+| `F8_invoices_rbac_rls_alignment.sql` | AGENT_STAFF sees 0 invoices by default (no `invoices:view` permission); sees their accessible-tree invoices once `user_permissions` grants `invoices:view`. ORG_ADMIN / CUSTOMER branches unchanged | 026 |
 | `F9_package_photos_parent_binding.sql` | `package_photos` visibility tracks packages RLS on the parent — no vestigial org-match check. Stages a photo on Ana's tombstone to prove CUSTOMER can't see it while ORG_ADMIN can | 025 |
 | `F10_global_reference_tables.sql` | Invariant: `permission_keys` + `role_permission_defaults` are globally readable (every authenticated user sees every row), and writes are default-deny for every role including ORG_ADMIN — only service_role can mutate | none (intentional, locked in by test) |
 | `F12_for_all_role_gates.sql` | CUSTOMER can't write to `org_settings` / `tags` / `label_templates` / `warehouse_locations` / `package_tags` | 018 |

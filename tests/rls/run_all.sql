@@ -48,6 +48,10 @@
 \i tests/rls/F7_role_v2_backfill.sql
 
 \echo ''
+\echo '--- F-8: invoices RBAC/RLS alignment (026) ---'
+\i tests/rls/F8_invoices_rbac_rls_alignment.sql
+
+\echo ''
 \echo '--- F-9: package_photos parent-binding (025) ---'
 \i tests/rls/F9_package_photos_parent_binding.sql
 
@@ -57,5 +61,5 @@
 
 \echo ''
 \echo '====================================================================='
-\echo 'All tests passed. Tier 6 (016-025) + F-9 + F-10 covered.'
+\echo 'All tests passed. Tier 6 (016-026) + F-8 + F-9 + F-10 covered.'
 \echo '====================================================================='
