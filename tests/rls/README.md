@@ -155,6 +155,7 @@ The snapshot deliberately includes only what an empty Supabase Postgres lacks:
 - 28 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` statements.
 - 76 `CREATE POLICY` statements — every CUSTOMER-facing SELECT policy already includes the `deleted_at IS NULL` filter from migration 024, and every policy uses the `( SELECT auth_org_id() )` initplan-wrap pattern from migration 011.
 - 32 `permission_keys` rows under "11. REFERENCE / LOOKUP DATA" — the global permission catalog that pre-024 migrations `INSERT`ed and that `role_permissions` / `user_permissions` FK to. Schema-only dumps drop these.
+- 65 `role_permission_defaults` rows in the same section — the global "this role gets these permissions by default" map (AGENT_ADMIN 19, AGENT_STAFF 3, ORG_ADMIN 32, WAREHOUSE_STAFF 11; CUSTOMER has 0, default-deny by design). `user_has_permission()` reads **this** table, not the per-org `role_permissions` table — so without these rows, every authorization check silently returns false and positive-path mutation tests (F-5, F-7, etc.) fail with 0-rows-affected.
 
 What it does **not** include: the `auth.*` schema (Supabase provides it), `storage.*` (same), grants to the `service_role` / `authenticated` / `anon` roles (Supabase provides those roles and the default privileges), and the Tier 5 JWT claims hook configuration (set on the project via `auth.config`, not via SQL).
 
@@ -278,13 +279,25 @@ SELECT t.table_name
    )
  ORDER BY t.table_name;
 -- Today this returns: permission_keys, role_permission_defaults.
--- role_permission_defaults is not currently FK'd from any seed row, so only
--- permission_keys strictly needs to be in the baseline — include it under a
--- `11. REFERENCE / LOOKUP DATA` section and use `ON CONFLICT (id) DO NOTHING`
--- so the block is re-runnable.
+-- Both belong in the baseline under `11. REFERENCE / LOOKUP DATA` with
+-- `ON CONFLICT (id) DO NOTHING` so the block is re-runnable.
+--
+-- permission_keys is the global permission catalog; role_permissions
+-- and user_permissions have FKs that resolve here.
+--
+-- role_permission_defaults is the global role→permission default map.
+-- It's NOT directly FK'd from any tenant row, but user_has_permission()
+-- reads it to decide whether a role carries a permission when there's
+-- no user_permissions override. Leaving it empty makes every positive
+-- authorization check silently return false — the bug that F-5's
+-- "ORG_ADMIN UPDATE invoice_line → 0 rows" failure first surfaced.
 SELECT id, category, description, is_hard_constraint
   FROM public.permission_keys
  ORDER BY category, id;
+
+SELECT id, role, permission_key, created_at
+  FROM public.role_permission_defaults
+ ORDER BY role, permission_key;
 ```
 
 After regenerating:
