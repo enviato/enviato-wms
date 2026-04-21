@@ -48,10 +48,14 @@
 \i tests/rls/F7_role_v2_backfill.sql
 
 \echo ''
+\echo '--- F-9: package_photos parent-binding (025) ---'
+\i tests/rls/F9_package_photos_parent_binding.sql
+
+\echo ''
 \echo '--- F-10: global reference tables readable-but-not-writable ---'
 \i tests/rls/F10_global_reference_tables.sql
 
 \echo ''
 \echo '====================================================================='
-\echo 'All tests passed. Tier 6 Phase A + B (016-024) + F-10 covered.'
+\echo 'All tests passed. Tier 6 (016-025) + F-9 + F-10 covered.'
 \echo '====================================================================='
