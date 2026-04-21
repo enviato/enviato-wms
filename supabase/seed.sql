@@ -291,7 +291,36 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
--- 11. Packages — Ana's 2 (1 live + 1 tombstone)
+-- 11. Invoices — Ana's 2 (1 live + 1 tombstone)
+--    Inserted BEFORE packages because packages.invoice_id FKs into
+--    invoices.id (fk_packages_invoice). Ordering matters on a fresh DB where
+--    no rows exist yet; prior to this fix CI died at
+--    "insert or update on table \"packages\" violates foreign key constraint
+--     \"fk_packages_invoice\"" because the package insert ran first.
+-- ----------------------------------------------------------------------------
+INSERT INTO public.invoices (id, org_id, courier_group_id, customer_id, invoice_number, status,
+                             pricing_model, rate_per_lb, subtotal, tax_rate, tax_amount, total, currency,
+                             notes, due_date, invoice_type, billed_by_agent_id, billed_to_agent_id,
+                             deleted_at, deleted_by, payment_terms)
+VALUES
+  -- Live — visible to Ana
+  ('72234ee7-700b-4570-ba15-9361fdbbcab1', '00000000-0000-0000-0000-000000000001',
+   '5bd5b323-d12e-416c-a409-276c493e4477', 'a0000000-0000-0000-0000-000000000007',
+   'INV-2026-0003', 'draft', 'gross_weight', 5, 459.28, 0, 0, 459.28, 'USD',
+   'test', '2026-04-13', 'STANDARD',
+   '62a362a4-cd8b-4093-adcc-79494cb72d0e', NULL,
+   NULL, NULL, 'due_on_receipt'),
+  -- Tombstoned — must be HIDDEN from Ana per migration 024
+  ('93f34f3c-415c-4078-9809-6ba1fe8dc0ae', '00000000-0000-0000-0000-000000000001',
+   '5bd5b323-d12e-416c-a409-276c493e4477', 'a0000000-0000-0000-0000-000000000007',
+   'INV-2026-0002', 'draft', 'gross_weight', 5, 243.45, 0, 0, 243.45, 'USD',
+   NULL, NULL, 'STANDARD',
+   NULL, NULL,
+   '2026-04-13T16:45:17.196+00:00', '4109f9a3-9c51-4096-91de-09223cbd9203', 'due_on_receipt')
+ON CONFLICT (id) DO NOTHING;
+
+-- ----------------------------------------------------------------------------
+-- 12. Packages — Ana's 2 (1 live + 1 tombstone, mirrors invoices shape)
 --    The trg_compute_weights trigger recomputes volume_weight/billable_weight,
 --    so the values we pass for those will be overwritten — that's fine.
 --    deleted_at on the first row drives the F-4 "tombstone hidden from
@@ -316,30 +345,6 @@ VALUES
    '975f7a5f-33f9-4359-8a7d-4668725486cd', '62a362a4-cd8b-4093-adcc-79494cb72d0e',
    '72234ee7-700b-4570-ba15-9361fdbbcab1',
    NULL, 'Electronics', 'This is damaged', '2026-03-14T03:28:20.63+00:00')
-ON CONFLICT (id) DO NOTHING;
-
--- ----------------------------------------------------------------------------
--- 12. Invoices — Ana's 2 (1 live + 1 tombstone, mirrors packages shape)
--- ----------------------------------------------------------------------------
-INSERT INTO public.invoices (id, org_id, courier_group_id, customer_id, invoice_number, status,
-                             pricing_model, rate_per_lb, subtotal, tax_rate, tax_amount, total, currency,
-                             notes, due_date, invoice_type, billed_by_agent_id, billed_to_agent_id,
-                             deleted_at, deleted_by, payment_terms)
-VALUES
-  -- Live — visible to Ana
-  ('72234ee7-700b-4570-ba15-9361fdbbcab1', '00000000-0000-0000-0000-000000000001',
-   '5bd5b323-d12e-416c-a409-276c493e4477', 'a0000000-0000-0000-0000-000000000007',
-   'INV-2026-0003', 'draft', 'gross_weight', 5, 459.28, 0, 0, 459.28, 'USD',
-   'test', '2026-04-13', 'STANDARD',
-   '62a362a4-cd8b-4093-adcc-79494cb72d0e', NULL,
-   NULL, NULL, 'due_on_receipt'),
-  -- Tombstoned — must be HIDDEN from Ana per migration 024
-  ('93f34f3c-415c-4078-9809-6ba1fe8dc0ae', '00000000-0000-0000-0000-000000000001',
-   '5bd5b323-d12e-416c-a409-276c493e4477', 'a0000000-0000-0000-0000-000000000007',
-   'INV-2026-0002', 'draft', 'gross_weight', 5, 243.45, 0, 0, 243.45, 'USD',
-   NULL, NULL, 'STANDARD',
-   NULL, NULL,
-   '2026-04-13T16:45:17.196+00:00', '4109f9a3-9c51-4096-91de-09223cbd9203', 'due_on_receipt')
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
