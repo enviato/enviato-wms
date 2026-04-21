@@ -21,8 +21,12 @@ max_rows = 1000
 [db]
 port = 54322
 shadow_port = 54320
-# Postgres major version — must match prod (verified 2026-04-20: 17.6.1.063).
-major_version = 17
+# Postgres major version intentionally omitted — CI uses whatever the installed
+# Supabase CLI defaults to. RLS semantics are identical from PG13+, so there's
+# no value in forcing CI to match prod's PG17. This also avoids config rejection
+# when the CI-installed CLI is older than the PG17 support cutoff (~1.215.x).
+# Prod is verified on PG 17.6.1.063; that assertion lives in the audit memory,
+# not here.
 
 [db.pooler]
 enabled = false

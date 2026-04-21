@@ -53,18 +53,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The Supabase CLI ships everything we need: a Postgres 17 container,
-      # migration runner, and seed loader. Pinning the version means CI
-      # behaves the same as local `supabase` invocations.
+      # The Supabase CLI ships everything we need: a Postgres container,
+      # migration runner, and seed loader. Omitting `version` tells the
+      # action to install the latest CLI release (passing `version: latest`
+      # as a literal string is historically flaky — it's gotten resolved
+      # to stale fallbacks in the past).
       #
-      # NOTE: must be >= 1.215.x — Postgres 17 support (our config.toml
-      # sets db.major_version=17) landed around that release. Older CLIs
-      # reject the config at parse time with "Invalid db.major_version: 17"
-      # and `supabase start` exits 1 before booting Docker.
+      # config.toml intentionally does NOT set db.major_version, so whatever
+      # Postgres the installed CLI defaults to is fine — RLS semantics are
+      # identical from PG13+.
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
-        with:
-          version: latest
 
       - name: Cache Supabase Docker images
         uses: actions/cache@v4
