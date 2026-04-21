@@ -96,22 +96,36 @@ jobs:
           restore-keys: |
             supabase-cli-${{ runner.os }}-
 
-      # Stash supabase/migrations/ before `supabase start` runs.
+      # Stash supabase/migrations/ AND supabase/seed.sql before
+      # `supabase start` runs.
       #
       # Modern supabase CLI (v1.100+) auto-applies every file under
-      # supabase/migrations/ as part of `supabase start` init — not just
-      # during `db reset`. Since our migration chain doesn't fresh-replay
-      # (the whole reason this workflow exists), the stack would die at
-      # 005_agents_hierarchy.sql before our baseline ever runs.
+      # supabase/migrations/ AND runs supabase/seed.sql as part of
+      # `supabase start` init — not only during `db reset`. Since our
+      # migration chain doesn't fresh-replay (the whole reason this
+      # workflow exists) and seed.sql references tables those migrations
+      # would create, the stack dies during init unless both are hidden.
       #
-      # By moving the directory aside, `supabase start` finds nothing to
-      # apply and boots cleanly. We restore the directory before the
-      # post-cutoff replay step so the loop can find any 025+.sql files.
-      - name: Stash migrations directory before stack boot
+      # Past CI failures we've seen here, in order:
+      #   commit 16a22e4: died on `Applying migration 005_agents_hierarchy.sql`
+      #     (relation "agents" does not exist) — fixed by stashing migrations.
+      #   commit 9c11373: died on `Seeding data from supabase/seed.sql`
+      #     (relation "public.role_permissions" does not exist) — same root
+      #     cause for seed; fixed by stashing seed.sql too.
+      #
+      # By moving both aside, `supabase start` finds nothing to apply or
+      # seed and boots cleanly. We restore both before the steps that
+      # actually need them (post-cutoff replay needs migrations/, the
+      # explicit Load seed step needs seed.sql).
+      - name: Stash migrations and seed before stack boot
         run: |
           if [ -d supabase/migrations ]; then
             mv supabase/migrations supabase/.migrations-stash
             echo "Stashed supabase/migrations -> supabase/.migrations-stash"
+          fi
+          if [ -f supabase/seed.sql ]; then
+            mv supabase/seed.sql supabase/.seed.sql.stash
+            echo "Stashed supabase/seed.sql -> supabase/.seed.sql.stash"
           fi
 
       # `supabase start` boots the local stack (Postgres + GoTrue + PostgREST
@@ -121,20 +135,23 @@ jobs:
       #
       # We deliberately skip `supabase db reset` here — see header for why.
       # The Supabase stack boots with an empty `public` schema (because we
-      # stashed migrations above); we apply the baseline + post-cutoff
-      # migrations ourselves below.
+      # stashed migrations and seed above); we apply the baseline +
+      # post-cutoff migrations + seed ourselves below.
       - name: Start Supabase stack
         run: supabase start
         working-directory: ${{ github.workspace }}
 
-      # Restore migrations now that the stack is up — the post-cutoff replay
-      # step needs the directory to exist.
-      - name: Restore migrations directory
+      # Restore migrations and seed now that the stack is up.
+      - name: Restore migrations and seed
         if: always()
         run: |
           if [ -d supabase/.migrations-stash ]; then
             mv supabase/.migrations-stash supabase/migrations
             echo "Restored supabase/migrations"
+          fi
+          if [ -f supabase/.seed.sql.stash ]; then
+            mv supabase/.seed.sql.stash supabase/seed.sql
+            echo "Restored supabase/seed.sql"
           fi
 
       # Belt-and-suspenders: drop and recreate `public` so we don't care
