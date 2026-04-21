@@ -96,17 +96,68 @@ jobs:
           restore-keys: |
             supabase-cli-${{ runner.os }}-
 
+      # Stash supabase/migrations/ before `supabase start` runs.
+      #
+      # Modern supabase CLI (v1.100+) auto-applies every file under
+      # supabase/migrations/ as part of `supabase start` init — not just
+      # during `db reset`. Since our migration chain doesn't fresh-replay
+      # (the whole reason this workflow exists), the stack would die at
+      # 005_agents_hierarchy.sql before our baseline ever runs.
+      #
+      # By moving the directory aside, `supabase start` finds nothing to
+      # apply and boots cleanly. We restore the directory before the
+      # post-cutoff replay step so the loop can find any 025+.sql files.
+      - name: Stash migrations directory before stack boot
+        run: |
+          if [ -d supabase/migrations ]; then
+            mv supabase/migrations supabase/.migrations-stash
+            echo "Stashed supabase/migrations -> supabase/.migrations-stash"
+          fi
+
       # `supabase start` boots the local stack (Postgres + GoTrue + PostgREST
       # + Studio + Inbucket) using supabase/config.toml. We only need
       # Postgres, but the CLI doesn't currently expose a Postgres-only mode,
       # and the boot is fast enough on GHA (~30-45s).
       #
       # We deliberately skip `supabase db reset` here — see header for why.
-      # The Supabase stack boots with an empty `public` schema; we apply
-      # the baseline + post-cutoff migrations ourselves below.
+      # The Supabase stack boots with an empty `public` schema (because we
+      # stashed migrations above); we apply the baseline + post-cutoff
+      # migrations ourselves below.
       - name: Start Supabase stack
         run: supabase start
         working-directory: ${{ github.workspace }}
+
+      # Restore migrations now that the stack is up — the post-cutoff replay
+      # step needs the directory to exist.
+      - name: Restore migrations directory
+        if: always()
+        run: |
+          if [ -d supabase/.migrations-stash ]; then
+            mv supabase/.migrations-stash supabase/migrations
+            echo "Restored supabase/migrations"
+          fi
+
+      # Belt-and-suspenders: drop and recreate `public` so we don't care
+      # what (if anything) `supabase start` left in there. Some CLI
+      # versions seed `public` with their own examples during init; we
+      # want a clean slate for the baseline. Schema-level grants are
+      # restored to match what Supabase's image normally provides.
+      - name: Reset public schema to empty
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 54322 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP SCHEMA IF EXISTS public CASCADE;
+                CREATE SCHEMA public;
+                GRANT ALL ON SCHEMA public TO postgres;
+                GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public
+                  GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;"
 
       # Apply the prod-equivalent schema snapshot. This is the heavy lift —
       # everything migrations 001-024 (and the out-of-band Studio drift)
