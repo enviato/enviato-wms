@@ -9,11 +9,30 @@
 #   policies as ROLLBACK-only PostgreSQL scripts. Running them locally before
 #   every release is brittle; this workflow makes them gate every PR.
 #
+# Why it does NOT use `supabase db reset`:
+#   Migrations 001-009 reflect the schema as it existed when those files were
+#   written, but prod has since drifted (~12 tables / several functions / new
+#   enums were created out-of-band via Supabase Studio and never backfilled
+#   into a numbered migration). `supabase db reset` replays migrations in
+#   filename order and breaks when later migrations reference objects the
+#   older migrations don't create.
+#
+#   Instead we apply a schema snapshot of prod (`supabase/_ci_baseline.sql`,
+#   reconstructed via Supabase MCP introspection on 2026-04-21) and then
+#   replay only the migrations newer than the snapshot's cutoff version
+#   (recorded in `supabase/_ci_baseline.cutoff`). This makes CI a faithful
+#   replica of prod's actual schema without requiring us to retroactively
+#   rewrite migrations 001-009.
+#
+#   Regeneration procedure for the baseline lives in tests/rls/README.md.
+#
 # Trigger scope (intentionally narrow — the suite isn't free to run):
 #   - Anything under supabase/migrations/  (schema or policy change)
 #   - Anything under tests/rls/             (test change)
 #   - This workflow file itself             (CI config drift)
 #   - supabase/seed.sql                     (fixtures change)
+#   - supabase/_ci_baseline.sql             (snapshot regenerated)
+#   - supabase/_ci_baseline.cutoff          (snapshot cutoff bumped)
 #   - supabase/config.toml                  (stack config change)
 
 name: RLS Regression Tests
@@ -23,6 +42,8 @@ on:
     paths:
       - "supabase/migrations/**"
       - "supabase/seed.sql"
+      - "supabase/_ci_baseline.sql"
+      - "supabase/_ci_baseline.cutoff"
       - "supabase/config.toml"
       - "tests/rls/**"
       - ".github/workflows/rls-tests.yml"
@@ -31,6 +52,8 @@ on:
     paths:
       - "supabase/migrations/**"
       - "supabase/seed.sql"
+      - "supabase/_ci_baseline.sql"
+      - "supabase/_ci_baseline.cutoff"
       - "supabase/config.toml"
       - "tests/rls/**"
       - ".github/workflows/rls-tests.yml"
@@ -61,7 +84,7 @@ jobs:
       #
       # config.toml intentionally does NOT set db.major_version, so whatever
       # Postgres the installed CLI defaults to is fine — RLS semantics are
-      # identical from PG13+.
+      # identical from PG13+, and prod runs PG17.
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
 
@@ -77,16 +100,85 @@ jobs:
       # + Studio + Inbucket) using supabase/config.toml. We only need
       # Postgres, but the CLI doesn't currently expose a Postgres-only mode,
       # and the boot is fast enough on GHA (~30-45s).
+      #
+      # We deliberately skip `supabase db reset` here — see header for why.
+      # The Supabase stack boots with an empty `public` schema; we apply
+      # the baseline + post-cutoff migrations ourselves below.
       - name: Start Supabase stack
         run: supabase start
         working-directory: ${{ github.workspace }}
 
-      # `supabase db reset` runs every migration in supabase/migrations/ in
-      # filename order, then runs supabase/seed.sql. After this, the local
-      # DB has the same schema as prod plus the test fixtures.
-      - name: Reset DB (run migrations + seed.sql)
-        run: supabase db reset
-        working-directory: ${{ github.workspace }}
+      # Apply the prod-equivalent schema snapshot. This is the heavy lift —
+      # everything migrations 001-024 (and the out-of-band Studio drift)
+      # would have created. After this step the local DB has the same
+      # schema, helpers, RLS policies, and grants as prod did at the cutoff
+      # version recorded in supabase/_ci_baseline.cutoff.
+      - name: Apply schema baseline
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 54322 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/_ci_baseline.sql
+
+      # Apply only the migrations newer than the baseline's cutoff. The
+      # cutoff file is one line: the numeric version of the highest
+      # migration the snapshot already includes. Anything strictly greater
+      # than that gets replayed in numeric order.
+      #
+      # Today (cutoff=024, latest migration=024) this loop matches nothing
+      # and exits silently. The first time someone adds a 025_*.sql file,
+      # it runs that migration here; the next baseline regeneration will
+      # absorb it and bump the cutoff.
+      - name: Apply post-cutoff migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          cutoff_raw=$(tr -d '[:space:]' < supabase/_ci_baseline.cutoff)
+          if ! [[ "$cutoff_raw" =~ ^[0-9]+$ ]]; then
+            echo "::error::supabase/_ci_baseline.cutoff is not a plain integer (got: '$cutoff_raw')"
+            exit 1
+          fi
+          # Force base-10 with 10#… so leading zeros don't make bash think
+          # we're doing octal (024 would otherwise parse fine, but 008/009
+          # would abort the whole job under `set -e`).
+          cutoff=$((10#$cutoff_raw))
+          echo "Baseline cutoff: $cutoff"
+          shopt -s nullglob
+          applied=0
+          # Glob expansion is already lexicographically sorted — no need
+          # for `$(ls ... | sort)`, which is glob-unsafe on whitespace.
+          for f in supabase/migrations/*.sql; do
+            base=$(basename "$f")
+            # Migration filenames are NNN_description.sql — take everything
+            # before the first underscore and coerce to base-10.
+            ver_raw="${base%%_*}"
+            if ! [[ "$ver_raw" =~ ^[0-9]+$ ]]; then
+              echo "::warning::Skipping $base (no numeric prefix)"
+              continue
+            fi
+            ver=$((10#$ver_raw))
+            if (( ver > cutoff )); then
+              echo "Applying post-cutoff migration: $base (version $ver)"
+              psql -h localhost -p 54322 -U postgres -d postgres \
+                -v ON_ERROR_STOP=1 \
+                -f "$f"
+              applied=$((applied + 1))
+            fi
+          done
+          echo "Post-cutoff migrations applied: $applied"
+
+      # Load fixtures. seed.sql is shared with `supabase db reset` and is
+      # idempotent enough to run after the baseline (uses ON CONFLICT DO
+      # NOTHING for static reference data).
+      - name: Load seed fixtures
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -p 54322 -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/seed.sql
 
       # Sanity: confirm seed loaded what the suite expects, fail fast with
       # a clear error if the seed regressed before we even start the suite.
