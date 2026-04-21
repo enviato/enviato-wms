@@ -112,7 +112,7 @@ VALUES
   ('00000000-0000-0000-0000-000000000001', '62a362a4-cd8b-4093-adcc-79494cb72d0e', '62a362a4-cd8b-4093-adcc-79494cb72d0e', 0),
   ('00000000-0000-0000-0000-000000000001', '62a362a4-cd8b-4093-adcc-79494cb72d0e', 'd2e6e5e9-75cb-4a9f-8475-b4c9b20b5663', 1),
   ('00000000-0000-0000-0000-000000000001', 'd2e6e5e9-75cb-4a9f-8475-b4c9b20b5663', 'd2e6e5e9-75cb-4a9f-8475-b4c9b20b5663', 0)
-ON CONFLICT (org_id, ancestor_id, descendant_id) DO NOTHING;
+ON CONFLICT (ancestor_id, descendant_id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
 -- 5. Courier groups (UPS for packages, LATAM for AWBs/invoices)
