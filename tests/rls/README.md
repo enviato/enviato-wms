@@ -56,7 +56,7 @@ All from prod org `00000000-0000-0000-0000-000000000001`, seeded by migration 00
 | ORG_ADMIN | `4109f9a3-9c51-4096-91de-09223cbd9203` | Alex — full-org permissions, positive-case checks |
 | WAREHOUSE_STAFF | `a0000000-0000-0000-0000-000000000020` | John — org-wide reads, limited writes |
 | AGENT_STAFF | `2e5f8d15-ba91-48d3-bc9d-4a1a55c346d9` | platinumcorp1 — self-escalation attempt victim |
-| CUSTOMER (HP5 target) | `a0000000-0000-0000-0000-000000000007` | Ana Martinez (ENV-00003) — has 2 pkgs + 2 inv + 1 AWB + photos + lines |
+| CUSTOMER (HP5 target) | `a0000000-0000-0000-0000-000000000007` | Ana Martinez (ENV-00003) — 1 live pkg + 1 tombstone, 1 live inv + 1 tombstone, 1 AWB, 4 lines, 1 photo. Post-024 RLS hides the tombstones. |
 | CUSTOMER (no data) | `a0000000-0000-0000-0000-000000000001` | Maria Santos (ENV-00001) — used for "legacy customer can't X" denials |
 
 If you add a test for a new finding, prefer computing ground truth at test time via a service-role query rather than hardcoding a count — the Ana fixture may grow.
@@ -68,9 +68,9 @@ If you add a test for a new finding, prefer computing ground truth at test time 
 | `F1_self_escalation.sql` | AGENT_STAFF can't UPDATE own `role_v2` to ORG_ADMIN | 016 |
 | `F2_agent_id_hijack.sql` | AGENT_STAFF can't reassign own `agent_id` | 016 |
 | `F3_unassigned_packages.sql` | No non-admin sees packages with `agent_id IS NULL` | 017 |
-| `F4_customer_read_surface.sql` | CUSTOMER sees exactly their own packages / invoices / AWBs / lines / photos (HP5) | 019 |
+| `F4_customer_read_surface.sql` | CUSTOMER sees exactly their own live (non-deleted) packages / invoices / AWBs / lines / photos (HP5 + F-11) | 019 + 024 |
 | `F5_invoice_lines_mutations.sql` | ORG_ADMIN UPDATE/DELETE `invoice_lines` works; CUSTOMER/staff-without-permission denied | 020 |
-| `F7_role_v2_backfill.sql` | Invariant: no active customer_number user has NULL `role_v2` | 021 + create-recipient route |
+| `F7_role_v2_backfill.sql` | Invariant: no active customer_number user has NULL `role_v2`; column is NOT NULL; INSERT without `role_v2` raises `not_null_violation` | 021 + create-recipient route + 023 |
 | `F12_for_all_role_gates.sql` | CUSTOMER can't write to `org_settings` / `tags` / `label_templates` / `warehouse_locations` / `package_tags` | 018 |
 | `cross_tenant_isolation.sql` | Org-scoping baseline: no cross-tenant leak on packages; AGENT_STAFF can't UPDATE another user | always-on |
 | `run_all.sql` | `\i`-concatenation of all the above in dependency order | — |
@@ -78,7 +78,7 @@ If you add a test for a new finding, prefer computing ground truth at test time 
 ## When to run
 
 - Before cutting a release tag.
-- After any migration that touches `supabase/migrations/*.sql` under or adjacent to the RLS policy files (016-022 + any new policy migration).
+- After any migration that touches `supabase/migrations/*.sql` under or adjacent to the RLS policy files (016-024 + any new policy migration).
 - Before merging any PR that changes helper functions (`auth_role_v2`, `auth_org_id`, `user_has_permission`, `get_accessible_agent_ids`, `custom_access_token_hook`).
 
 ## Adding a new test

@@ -1,49 +1,62 @@
 -- tests/rls/F4_customer_read_surface.sql
--- Locks in fix for F-4 (HIGH) + HP5 hotfix — migration 019_customer_read_surface.sql.
+-- Locks in fix for F-4 (HIGH) + HP5 hotfix — migration 019_customer_read_surface.sql
+-- AND the follow-up tombstone filter from 024_customer_deleted_at_filter.sql.
 --
 -- Gap (pre-019): packages_select_v2 / invoices_select_v2 / awbs_select_v2 had no
 -- CUSTOMER branch. A legitimate customer who signed in saw 0 packages despite
 -- having packages marked with their customer_id — the product surface was
 -- unreachable via RLS as designed.
 --
--- Fix: 019 added
+-- Fix (019): added
 --   OR (auth_role_v2() = 'CUSTOMER' AND customer_id = auth.uid())
 -- to each SELECT policy. AWBs cascade via EXISTS through packages (no
 -- customer_id column on awbs). invoice_lines + package_photos cascade via
 -- their existing EXISTS subqueries.
 --
--- Cross-check (HP5 verification, memory 2026-04-20): Ana Martinez (ENV-00003,
--- a0000000-...-000000000007) must see exactly 2 packages / 2 invoices / 1 AWB
--- / 4 invoice_lines / 1 photo, and zero cross-tenant rows.
+-- Follow-up (024): added AND deleted_at IS NULL to the CUSTOMER branch of all
+-- three policies (packages / invoices / awbs), plus p.deleted_at IS NULL inside
+-- the awbs EXISTS subquery. ORG/AGENT branches intentionally untouched — the
+-- TrashSettings admin UI depends on RLS passing tombstones through for them.
 --
 -- This test compares the RLS-filtered count (as Ana) against ground truth
--- computed via service-role, so it stays correct if seed data grows.
+-- computed via service-role. Ground truth now excludes soft-deleted rows to
+-- mirror 024's semantics. Cascade targets (invoice_lines / package_photos)
+-- filter on their PARENT's deleted_at since those tables have no deleted_at
+-- column of their own.
 
 BEGIN;
 
 -- Compute ground truth for Ana before impersonation (service-role scope).
--- IMPORTANT: this ground-truth query MUST mirror what 019's RLS clauses do —
--- and 019 does NOT filter `deleted_at IS NULL`. That's F-11 (LOW), still
--- open. If F-11 ever gets fixed (a deleted_at filter added to the SELECT
--- policies), update this query to add the same filter so the test stays
--- aligned with the policy.
+-- Ground-truth mirrors 019 + 024 semantics:
+--   - packages / invoices / awbs: deleted_at IS NULL
+--   - invoice_lines / package_photos: no deleted_at column; filter parent's
+--     deleted_at inside EXISTS (matches how RLS cascade behaves after 024).
 DO $$
 DECLARE
   v_ana uuid := 'a0000000-0000-0000-0000-000000000007';
 BEGIN
   CREATE TEMP TABLE _f4_truth ON COMMIT DROP AS
   SELECT
-    (SELECT COUNT(*) FROM public.packages WHERE customer_id = v_ana) AS pkgs,
-    (SELECT COUNT(*) FROM public.invoices WHERE customer_id = v_ana) AS invs,
+    (SELECT COUNT(*) FROM public.packages
+       WHERE customer_id = v_ana AND deleted_at IS NULL) AS pkgs,
+    (SELECT COUNT(*) FROM public.invoices
+       WHERE customer_id = v_ana AND deleted_at IS NULL) AS invs,
     (SELECT COUNT(*) FROM public.awbs a
-       WHERE EXISTS (SELECT 1 FROM public.packages p
-                      WHERE p.awb_id = a.id AND p.customer_id = v_ana)) AS awbs,
+       WHERE a.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM public.packages p
+                      WHERE p.awb_id = a.id
+                        AND p.customer_id = v_ana
+                        AND p.deleted_at IS NULL)) AS awbs,
     (SELECT COUNT(*) FROM public.invoice_lines il
        WHERE EXISTS (SELECT 1 FROM public.invoices i
-                      WHERE i.id = il.invoice_id AND i.customer_id = v_ana)) AS lines,
+                      WHERE i.id = il.invoice_id
+                        AND i.customer_id = v_ana
+                        AND i.deleted_at IS NULL)) AS lines,
     (SELECT COUNT(*) FROM public.package_photos ph
        WHERE EXISTS (SELECT 1 FROM public.packages p
-                      WHERE p.id = ph.package_id AND p.customer_id = v_ana)) AS photos;
+                      WHERE p.id = ph.package_id
+                        AND p.customer_id = v_ana
+                        AND p.deleted_at IS NULL)) AS photos;
 
   -- Sanity: ground truth must be non-zero for the test to be meaningful.
   PERFORM 1 FROM _f4_truth WHERE pkgs > 0;
@@ -81,20 +94,23 @@ BEGIN
   SELECT COUNT(*) INTO rls_photos FROM public.package_photos;
 
   -- Equality-check each surface against ground truth.
+  -- If rls > truth, the most likely regression is 024 being reverted
+  -- (tombstones leaking back into the CUSTOMER surface).
+  -- If rls < truth, the most likely regression is 019's CUSTOMER branch.
   IF rls_pkgs <> t_pkgs THEN
-    RAISE EXCEPTION 'TEST FAIL (F-4 packages): RLS showed %, ground truth %. Check 019 packages branch.', rls_pkgs, t_pkgs;
+    RAISE EXCEPTION 'TEST FAIL (F-4 packages): RLS showed %, ground truth %. Check 019 CUSTOMER branch / 024 deleted_at filter.', rls_pkgs, t_pkgs;
   END IF;
   IF rls_invs <> t_invs THEN
-    RAISE EXCEPTION 'TEST FAIL (F-4 invoices): RLS showed %, ground truth %. Check 019 invoices branch.', rls_invs, t_invs;
+    RAISE EXCEPTION 'TEST FAIL (F-4 invoices): RLS showed %, ground truth %. Check 019 CUSTOMER branch / 024 deleted_at filter.', rls_invs, t_invs;
   END IF;
   IF rls_awbs <> t_awbs THEN
-    RAISE EXCEPTION 'TEST FAIL (F-4 awbs): RLS showed %, ground truth %. Check 019 awbs EXISTS cascade.', rls_awbs, t_awbs;
+    RAISE EXCEPTION 'TEST FAIL (F-4 awbs): RLS showed %, ground truth %. Check 019 awbs EXISTS cascade / 024 deleted_at filter.', rls_awbs, t_awbs;
   END IF;
   IF rls_lines <> t_lines THEN
-    RAISE EXCEPTION 'TEST FAIL (F-4 invoice_lines): RLS showed %, ground truth %. Check invoice_lines SELECT cascade.', rls_lines, t_lines;
+    RAISE EXCEPTION 'TEST FAIL (F-4 invoice_lines): RLS showed %, ground truth %. Check invoice_lines SELECT cascade through invoices.', rls_lines, t_lines;
   END IF;
   IF rls_photos <> t_photos THEN
-    RAISE EXCEPTION 'TEST FAIL (F-4 package_photos): RLS showed %, ground truth %. Check package_photos SELECT cascade.', rls_photos, t_photos;
+    RAISE EXCEPTION 'TEST FAIL (F-4 package_photos): RLS showed %, ground truth %. Check package_photos SELECT cascade through packages.', rls_photos, t_photos;
   END IF;
 
   RAISE NOTICE 'TEST PASS (F-4 / HP5 surface match): pkgs=%, invs=%, awbs=%, lines=%, photos=%', rls_pkgs, rls_invs, rls_awbs, rls_lines, rls_photos;
