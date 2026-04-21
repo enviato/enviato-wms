@@ -48,6 +48,10 @@
 \i tests/rls/F7_role_v2_backfill.sql
 
 \echo ''
+\echo '--- F-10: global reference tables readable-but-not-writable ---'
+\i tests/rls/F10_global_reference_tables.sql
+
+\echo ''
 \echo '====================================================================='
-\echo 'All tests passed. Tier 6 Phase A + B (016-022) regressions covered.'
+\echo 'All tests passed. Tier 6 Phase A + B (016-024) + F-10 covered.'
 \echo '====================================================================='
