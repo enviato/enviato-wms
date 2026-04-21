@@ -1895,6 +1895,81 @@ INSERT INTO public.permission_keys (id, category, description, is_hard_constrain
   ('users:view',             'users',     'View users',                        false, NOW())
 ON CONFLICT (id) DO NOTHING;
 
+-- role_permission_defaults — global default role → permission map.
+--   user_has_permission() reads this table (NOT per-org role_permissions) to
+--   decide whether a role carries a permission when no user_permissions
+--   override exists. CI was silently failing F-5's ORG_ADMIN UPDATE case
+--   because this table was empty, so user_has_permission returned false.
+--   Dumped from prod 2026-04-21. CUSTOMER has zero rows by design (defaults
+--   to deny on every permission).
+INSERT INTO public.role_permission_defaults (id, role, permission_key, created_at) VALUES
+  ('f06ea9e3-f7dc-48eb-a522-f8754b011573', 'AGENT_ADMIN',     'agents:view',              NOW()),
+  ('45e0d7f9-4055-415d-b297-07b26d213536', 'AGENT_ADMIN',     'invoices:create',          NOW()),
+  ('2f54f6ef-9ff5-4f8d-a913-044a0d32823c', 'AGENT_ADMIN',     'invoices:edit',            NOW()),
+  ('e24b55a4-733e-497c-b5e8-065e40ee7227', 'AGENT_ADMIN',     'invoices:export_pdf',      NOW()),
+  ('2c2bd09a-c133-461e-8045-1f5da8cdab43', 'AGENT_ADMIN',     'invoices:send',            NOW()),
+  ('131f53ce-b145-4fbe-b869-f01895af8fcc', 'AGENT_ADMIN',     'invoices:view',            NOW()),
+  ('658b9da0-ae8c-4f92-9f68-6f6cd8d6f2a0', 'AGENT_ADMIN',     'packages:create',          NOW()),
+  ('ad0f31a2-09c5-465e-87a6-63111fda0849', 'AGENT_ADMIN',     'packages:edit',            NOW()),
+  ('b055e1ac-41c4-4a3a-9e9a-17db0b6215e0', 'AGENT_ADMIN',     'packages:scan_receive',    NOW()),
+  ('cb0f13da-ac89-417b-a4b7-164b47ab90c8', 'AGENT_ADMIN',     'packages:view',            NOW()),
+  ('e7943a4d-6c52-46ee-b5fc-622f235a27fc', 'AGENT_ADMIN',     'recipients:create',        NOW()),
+  ('50100fa2-9792-462a-a9d4-d2e8e266edef', 'AGENT_ADMIN',     'recipients:edit',          NOW()),
+  ('83fd33e1-68dc-4db4-9919-99971f4c0e6c', 'AGENT_ADMIN',     'recipients:view',          NOW()),
+  ('04b0d8cd-bc07-4272-aafa-917fbc55bf1d', 'AGENT_ADMIN',     'shipments:create',         NOW()),
+  ('f5da9332-df3d-490b-827e-a60e02b5cb0c', 'AGENT_ADMIN',     'shipments:edit',           NOW()),
+  ('125ffa08-cc49-43f1-9369-eb8e3ca1df24', 'AGENT_ADMIN',     'shipments:view',           NOW()),
+  ('905e5748-fb56-4cce-8d97-e5cbd1dcaec5', 'AGENT_ADMIN',     'users:disable',            NOW()),
+  ('3e0f229e-4796-42d4-8b66-c40f495fd58b', 'AGENT_ADMIN',     'users:invite',             NOW()),
+  ('292bbaea-07cd-41a0-a2e0-3325da374d25', 'AGENT_ADMIN',     'users:view',               NOW()),
+  ('b81f75bf-a719-4b4a-8223-8f118df2da0e', 'AGENT_STAFF',     'packages:scan_receive',    NOW()),
+  ('11d3d753-d74f-48b1-ae5a-53ec54c9a947', 'AGENT_STAFF',     'packages:view',            NOW()),
+  ('393561ac-c729-4beb-9bd4-a0293891a427', 'AGENT_STAFF',     'shipments:view',           NOW()),
+  ('f6fd664c-0764-4fa6-8759-654812dba917', 'ORG_ADMIN',       'agents:create',            NOW()),
+  ('c683d85d-2b4d-42bc-b69f-bd47688449cc', 'ORG_ADMIN',       'agents:delete',            NOW()),
+  ('b422ec9a-67fd-491c-b302-01261a71b3ca', 'ORG_ADMIN',       'agents:edit',              NOW()),
+  ('02f52790-9514-40f4-ac7a-17457f98a9fa', 'ORG_ADMIN',       'agents:view',              NOW()),
+  ('13c062e6-16da-4787-99a3-62f0849c8a84', 'ORG_ADMIN',       'invoices:create',          NOW()),
+  ('b337e951-1ba6-4e87-bf73-6bf49147183e', 'ORG_ADMIN',       'invoices:delete',          NOW()),
+  ('588b2913-965e-4d8c-9abf-eada89b76c74', 'ORG_ADMIN',       'invoices:edit',            NOW()),
+  ('0d8652b3-b36e-47a5-baf3-99ca80d1a7ba', 'ORG_ADMIN',       'invoices:export_pdf',      NOW()),
+  ('f5ccefe3-9e95-4d22-b8aa-1a8606b1e82e', 'ORG_ADMIN',       'invoices:send',            NOW()),
+  ('202b7f9e-d7c2-4eeb-96b7-63439f8ff252', 'ORG_ADMIN',       'invoices:view',            NOW()),
+  ('7d4fca17-e14e-45be-b970-b33d4472de32', 'ORG_ADMIN',       'packages:create',          NOW()),
+  ('d69018dc-06af-40d1-97c0-1433196cc8dd', 'ORG_ADMIN',       'packages:delete',          NOW()),
+  ('43c5b0a2-57f2-4a75-975b-ab09dd834781', 'ORG_ADMIN',       'packages:edit',            NOW()),
+  ('ff460630-cde1-4f5f-b3e1-25723ca0e846', 'ORG_ADMIN',       'packages:scan_receive',    NOW()),
+  ('0de2f1a4-ebfb-4a34-9feb-05862ae7f793', 'ORG_ADMIN',       'packages:view',            NOW()),
+  ('ba9b7cf5-6185-45aa-acff-f5bd8c4c0c37', 'ORG_ADMIN',       'recipients:create',        NOW()),
+  ('6d7df58c-72e3-4d86-b420-b2d82c1aa316', 'ORG_ADMIN',       'recipients:delete',        NOW()),
+  ('9f63f5aa-5d04-4a2e-8a45-00d4d6a9f3cf', 'ORG_ADMIN',       'recipients:edit',          NOW()),
+  ('1408fdd8-1058-473f-bde8-1c6a575511fd', 'ORG_ADMIN',       'recipients:view',          NOW()),
+  ('70f36ef5-9bda-4ad7-874c-aa96684b8e49', 'ORG_ADMIN',       'settings:edit',            NOW()),
+  ('27f7c469-69eb-4776-aecf-984a070f8db1', 'ORG_ADMIN',       'settings:view',            NOW()),
+  ('8e34f0ac-a903-4c1c-ac37-e282776ec814', 'ORG_ADMIN',       'settings:view_analytics',  NOW()),
+  ('1b706145-30b0-417e-b4d5-a744322f7608', 'ORG_ADMIN',       'shipments:assign_agent',   NOW()),
+  ('c48e7f38-b341-4c6a-9967-77d2ac61dbeb', 'ORG_ADMIN',       'shipments:create',         NOW()),
+  ('e15f9e58-bf0d-4d31-9043-0960b7955bba', 'ORG_ADMIN',       'shipments:delete',         NOW()),
+  ('9520d8f5-ac61-4f99-bfee-9f05464d11f3', 'ORG_ADMIN',       'shipments:edit',           NOW()),
+  ('430cec54-db99-4264-8817-8be20c238061', 'ORG_ADMIN',       'shipments:view',           NOW()),
+  ('82b0053b-fac7-4c0c-96e2-7150436742a4', 'ORG_ADMIN',       'users:disable',            NOW()),
+  ('1c02b06d-7277-4a4b-b362-e20b707cf3b0', 'ORG_ADMIN',       'users:edit_role',          NOW()),
+  ('3b0b5621-1577-4e63-94c6-1050e5f65817', 'ORG_ADMIN',       'users:invite',             NOW()),
+  ('9a1be952-e4ad-4f70-9acd-302d1c7ca12a', 'ORG_ADMIN',       'users:set_permissions',    NOW()),
+  ('b6ae0170-788f-4067-bf93-ff9a6d8f9352', 'ORG_ADMIN',       'users:view',               NOW()),
+  ('47542ab3-5194-4db5-8cd1-98e985542604', 'WAREHOUSE_STAFF', 'packages:create',          NOW()),
+  ('8bf3177f-5db4-47d3-8b03-5f5585e97c30', 'WAREHOUSE_STAFF', 'packages:edit',            NOW()),
+  ('e33eb22a-88ad-4b26-a24c-99f02b6cb6c3', 'WAREHOUSE_STAFF', 'packages:scan_receive',    NOW()),
+  ('36a28b5d-49d4-468e-bbfc-3ac0a9ec9f44', 'WAREHOUSE_STAFF', 'packages:view',            NOW()),
+  ('fc89f11a-a071-4eb5-9c7b-33c66910e6eb', 'WAREHOUSE_STAFF', 'recipients:create',        NOW()),
+  ('255bfacd-c6c5-4783-8f34-feacb3a95634', 'WAREHOUSE_STAFF', 'recipients:edit',          NOW()),
+  ('7e8105b9-3036-412d-a5bf-e8b645aa5917', 'WAREHOUSE_STAFF', 'recipients:view',          NOW()),
+  ('25a8f0c5-c829-417b-b5bf-b547eba05ce0', 'WAREHOUSE_STAFF', 'shipments:assign_agent',   NOW()),
+  ('f83c0b6b-5eb9-43a8-acc0-6cb4e1abf331', 'WAREHOUSE_STAFF', 'shipments:create',         NOW()),
+  ('8ce5ddcf-5fc3-44da-963b-fe6d3be9633b', 'WAREHOUSE_STAFF', 'shipments:edit',           NOW()),
+  ('394fa9fd-0edc-457a-bde9-4644259161ce', 'WAREHOUSE_STAFF', 'shipments:view',           NOW())
+ON CONFLICT (id) DO NOTHING;
+
 -- =============================================================================
 -- END OF BASELINE
 -- =============================================================================
