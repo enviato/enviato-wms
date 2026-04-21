@@ -64,6 +64,10 @@
 \i tests/rls/F6b_get_accessible_agent_ids_jwt.sql
 
 \echo ''
+\echo '--- F-6c: user_has_permission JWT-first (029) ---'
+\i tests/rls/F6c_user_has_permission_jwt.sql
+
+\echo ''
 \echo '====================================================================='
-\echo 'All tests passed. Tier 6 (016-028) + F-8 + F-9 + F-10 + F-6b covered.'
+\echo 'All tests passed. Tier 6 (016-029) + F-8 + F-9 + F-10 + F-6b + F-6c covered.'
 \echo '====================================================================='

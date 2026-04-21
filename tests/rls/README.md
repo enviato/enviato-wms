@@ -76,6 +76,7 @@ If you add a test for a new finding, prefer computing ground truth at test time 
 | `F10_global_reference_tables.sql` | Invariant: `permission_keys` + `role_permission_defaults` are globally readable (every authenticated user sees every row), and writes are default-deny for every role including ORG_ADMIN — only service_role can mutate | none (intentional, locked in by test) |
 | `F12_for_all_role_gates.sql` | CUSTOMER can't write to `org_settings` / `tags` / `label_templates` / `warehouse_locations` / `package_tags` | 018 |
 | `F6b_get_accessible_agent_ids_jwt.sql` | `get_accessible_agent_ids` reads `agent_id`/`role_v2`/`org_id` from JWT `app_metadata` first; falls back to `public.users` on cross-user lookup, service_role context, or pre-027 token (missing `agent_id` claim). Forged-claim case proves fast path is honored | 027 + 028 |
+| `F6c_user_has_permission_jwt.sql` | `user_has_permission` reads `role_v2` from JWT `app_metadata` when `p_user_id = auth.uid()`; falls back to `public.users` on cross-user lookup / missing claim. Override + hard-constraint + role-default branches unchanged; forged-claim case proves fast path is honored, hard-constraint case proves the guard still fires when role came from JWT | 029 |
 | `cross_tenant_isolation.sql` | Org-scoping baseline: no cross-tenant leak on packages; AGENT_STAFF can't UPDATE another user | always-on |
 | `run_all.sql` | `\i`-concatenation of all the above in dependency order | — |
 
