@@ -60,6 +60,10 @@
 \i tests/rls/F10_global_reference_tables.sql
 
 \echo ''
+\echo '--- F-6b: get_accessible_agent_ids JWT-first (027/028) ---'
+\i tests/rls/F6b_get_accessible_agent_ids_jwt.sql
+
+\echo ''
 \echo '====================================================================='
-\echo 'All tests passed. Tier 6 (016-026) + F-8 + F-9 + F-10 covered.'
+\echo 'All tests passed. Tier 6 (016-028) + F-8 + F-9 + F-10 + F-6b covered.'
 \echo '====================================================================='
