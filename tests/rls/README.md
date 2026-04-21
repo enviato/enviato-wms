@@ -81,6 +81,41 @@ If you add a test for a new finding, prefer computing ground truth at test time 
 - After any migration that touches `supabase/migrations/*.sql` under or adjacent to the RLS policy files (016-024 + any new policy migration).
 - Before merging any PR that changes helper functions (`auth_role_v2`, `auth_org_id`, `user_has_permission`, `get_accessible_agent_ids`, `custom_access_token_hook`).
 
+## CI
+
+The suite runs automatically in GitHub Actions via [`.github/workflows/rls-tests.yml`](../../.github/workflows/rls-tests.yml). It triggers on PRs and pushes to `main` that touch:
+
+- `supabase/migrations/**` — schema or policy changes
+- `supabase/seed.sql` — fixture changes
+- `supabase/config.toml` — local stack config
+- `tests/rls/**` — test changes
+- The workflow file itself
+
+The CI job:
+
+1. Boots a local Supabase stack via `supabase start` (Postgres 17, matching prod).
+2. Runs `supabase db reset` — applies every migration in `supabase/migrations/` then loads `supabase/seed.sql`.
+3. Verifies the seed produced the expected fixture shape (5 users, Ana with 2 packages + 2 invoices, ORG_ADMIN role carries `invoices:edit`). Fails fast with a clear error if not.
+4. Runs `psql -v ON_ERROR_STOP=1 -f tests/rls/run_all.sql`. Any `RAISE EXCEPTION` from an assertion aborts the whole run.
+5. On success, dumps `pg_policies` to the Actions log so reviewers can confirm policies match what the PR claims.
+
+`ON_ERROR_STOP=1` is mandatory — without it, psql prints the error and continues, masking failures. The workflow sets it on every psql invocation.
+
+### Reproducing CI locally
+
+The same commands the workflow uses work locally if you have the Supabase CLI installed:
+
+```bash
+supabase start
+supabase db reset                                              # migrations + seed
+psql "postgresql://postgres:postgres@localhost:54322/postgres" \
+  -v ON_ERROR_STOP=1 -f tests/rls/run_all.sql
+```
+
+### Fixtures
+
+`supabase/seed.sql` seeds the cast referenced in the table above (Alex, Ana, Maria, John, platinumcorp1) plus Ana's 2 packages, 2 invoices, 1 AWB, 4 invoice lines, 1 photo, the agent tree (ENV → SnapShop → MTX), 5 system roles + their 67 permissions, the UPS / LATAM courier groups, and 1 tag. The data was dumped from prod org `0...001` on 2026-04-20 — see the file header for the regeneration recipe.
+
 ## Adding a new test
 
 1. Copy `F1_self_escalation.sql` as a template.
