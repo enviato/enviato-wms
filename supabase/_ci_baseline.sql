@@ -1851,5 +1851,50 @@ CREATE POLICY warehouse_locations_write ON public.warehouse_locations
   WITH CHECK ((org_id = ( SELECT auth_org_id() AS auth_org_id)) AND (( SELECT auth_role_v2() AS auth_role_v2) = 'ORG_ADMIN'::user_role_v2));
 
 -- =============================================================================
+-- 11. REFERENCE / LOOKUP DATA
+-- =============================================================================
+-- These rows are global (no org_id) and were originally INSERT'd by pre-024
+-- migrations. The schema-only snapshot drops the INSERTs, so we restore them
+-- here. Keep this list in sync with prod via the regeneration queries in
+-- tests/rls/README.md.
+--
+-- permission_keys — FK target for role_permissions + user_permissions.
+--   Dumped from prod 2026-04-21 via Supabase MCP.
+INSERT INTO public.permission_keys (id, category, description, is_hard_constraint, created_at) VALUES
+  ('agents:create',          'agents',    'Create sub-agents',                 false, NOW()),
+  ('agents:delete',          'agents',    'Delete agents',                     true,  NOW()),
+  ('agents:edit',            'agents',    'Edit agent details',                true,  NOW()),
+  ('agents:view',            'agents',    'View agent hierarchy',              false, NOW()),
+  ('invoices:create',        'invoices',  'Create invoices',                   false, NOW()),
+  ('invoices:delete',        'invoices',  'Delete invoices',                   true,  NOW()),
+  ('invoices:edit',          'invoices',  'Edit draft invoices',               false, NOW()),
+  ('invoices:export_pdf',    'invoices',  'Export invoices as PDF',            false, NOW()),
+  ('invoices:send',          'invoices',  'Send invoices',                     false, NOW()),
+  ('invoices:view',          'invoices',  'View invoices',                     false, NOW()),
+  ('packages:create',        'packages',  'Create packages (check-in)',        false, NOW()),
+  ('packages:delete',        'packages',  'Delete packages',                   true,  NOW()),
+  ('packages:edit',          'packages',  'Edit package details',              false, NOW()),
+  ('packages:scan_receive',  'packages',  'Mark packages as received',         false, NOW()),
+  ('packages:view',          'packages',  'View packages',                     false, NOW()),
+  ('recipients:create',      'recipients','Create recipients',                 false, NOW()),
+  ('recipients:delete',      'recipients','Delete recipients',                 true,  NOW()),
+  ('recipients:edit',        'recipients','Edit recipient details',            false, NOW()),
+  ('recipients:view',        'recipients','View recipients',                   false, NOW()),
+  ('settings:edit',          'settings',  'Edit organization settings',        true,  NOW()),
+  ('settings:view',          'settings',  'View organization settings',        false, NOW()),
+  ('settings:view_analytics','settings',  'View analytics dashboard',          false, NOW()),
+  ('shipments:assign_agent', 'shipments', 'Assign shipment to agent',          false, NOW()),
+  ('shipments:create',       'shipments', 'Create new shipments',              false, NOW()),
+  ('shipments:delete',       'shipments', 'Delete shipments',                  true,  NOW()),
+  ('shipments:edit',         'shipments', 'Edit shipment details',             false, NOW()),
+  ('shipments:view',         'shipments', 'View shipments',                    false, NOW()),
+  ('users:disable',          'users',     'Disable user accounts',             false, NOW()),
+  ('users:edit_role',        'users',     'Change user roles',                 true,  NOW()),
+  ('users:invite',           'users',     'Invite new users',                  false, NOW()),
+  ('users:set_permissions',  'users',     'Set user permission overrides',     true,  NOW()),
+  ('users:view',             'users',     'View users',                        false, NOW())
+ON CONFLICT (id) DO NOTHING;
+
+-- =============================================================================
 -- END OF BASELINE
 -- =============================================================================

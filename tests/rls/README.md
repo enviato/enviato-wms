@@ -154,6 +154,7 @@ The snapshot deliberately includes only what an empty Supabase Postgres lacks:
 - 19 triggers.
 - 28 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` statements.
 - 76 `CREATE POLICY` statements — every CUSTOMER-facing SELECT policy already includes the `deleted_at IS NULL` filter from migration 024, and every policy uses the `( SELECT auth_org_id() )` initplan-wrap pattern from migration 011.
+- 32 `permission_keys` rows under "11. REFERENCE / LOOKUP DATA" — the global permission catalog that pre-024 migrations `INSERT`ed and that `role_permissions` / `user_permissions` FK to. Schema-only dumps drop these.
 
 What it does **not** include: the `auth.*` schema (Supabase provides it), `storage.*` (same), grants to the `service_role` / `authenticated` / `anon` roles (Supabase provides those roles and the default privileges), and the Tier 5 JWT claims hook configuration (set on the project via `auth.config`, not via SQL).
 
@@ -165,7 +166,7 @@ Bump the cutoff and regenerate the snapshot whenever:
 - Out-of-band schema changes get made via Studio (try not to — but if it happens, the snapshot is the system of record).
 - The functions, policies, or default privileges drift from what the snapshot reflects.
 
-The snapshot was originally built by introspecting prod via the Supabase MCP. The 9 queries below reproduce the source data; assemble them into `_ci_baseline.sql` in the order shown.
+The snapshot was originally built by introspecting prod via the Supabase MCP. The 10 queries below reproduce the source data; assemble them into `_ci_baseline.sql` in the order shown.
 
 ```sql
 -- 1. Extensions worth replaying (skip the Supabase-provided ones)
@@ -257,11 +258,38 @@ SELECT schemaname, tablename, policyname, permissive, roles, cmd,
   FROM pg_policies
  WHERE schemaname = 'public'
  ORDER BY tablename, policyname;
+
+-- 10. Reference / lookup data. Dump every row from tables that have no
+--     org_id (so they're global) and are populated by migrations, not by
+--     tenant runtime. These rows have to be in the baseline because the
+--     schema-only dump above drops the migrations' INSERT statements and
+--     tenant FKs (role_permissions.permission_key, user_permissions.permission_key)
+--     resolve to them.
+--
+-- First list the candidate tables, then dump each one.
+SELECT t.table_name
+  FROM information_schema.tables t
+ WHERE t.table_schema = 'public'
+   AND NOT EXISTS (
+     SELECT 1 FROM information_schema.columns c
+      WHERE c.table_schema = t.table_schema
+        AND c.table_name   = t.table_name
+        AND c.column_name  = 'org_id'
+   )
+ ORDER BY t.table_name;
+-- Today this returns: permission_keys, role_permission_defaults.
+-- role_permission_defaults is not currently FK'd from any seed row, so only
+-- permission_keys strictly needs to be in the baseline — include it under a
+-- `11. REFERENCE / LOOKUP DATA` section and use `ON CONFLICT (id) DO NOTHING`
+-- so the block is re-runnable.
+SELECT id, category, description, is_hard_constraint
+  FROM public.permission_keys
+ ORDER BY category, id;
 ```
 
 After regenerating:
 
-1. Overwrite `supabase/_ci_baseline.sql` with the new dump. Keep the section ordering (extensions → enums → sequences → tables → FKs → indexes → functions → triggers → RLS enable → policies) so a fresh psql run never references something not yet created.
+1. Overwrite `supabase/_ci_baseline.sql` with the new dump. Keep the section ordering (extensions → enums → sequences → tables → FKs → indexes → functions → triggers → RLS enable → policies → reference data) so a fresh psql run never references something not yet created.
 2. Update `supabase/_ci_baseline.cutoff` to the highest migration version the new dump reflects.
 3. Open the PR. CI runs the new baseline against the suite — green PR means the snapshot still satisfies every policy assertion.
 
