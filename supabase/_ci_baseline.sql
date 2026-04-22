@@ -7,7 +7,7 @@
 -- were augmented with out-of-band Supabase Studio edits that are not
 -- captured anywhere else).
 --
--- Reflects state at migration 024 (see _ci_baseline.cutoff). Any migration
+-- Reflects state at migration 029 (see _ci_baseline.cutoff). Any migration
 -- with a version number > the cutoff is layered on top by the CI workflow
 -- after this baseline applies.
 --
@@ -892,6 +892,7 @@ BEGIN
   SELECT u.role_v2,
          u.role_id,
          u.org_id,
+         u.agent_id,
          u.role
     INTO user_record
     FROM public.users u
@@ -906,6 +907,7 @@ BEGIN
       'role_v2',     user_record.role_v2,
       'role_id',     user_record.role_id,
       'org_id',      user_record.org_id,
+      'agent_id',    user_record.agent_id,
       'legacy_role', user_record.role
     );
     claims := jsonb_set(claims, '{app_metadata}', existing_app_meta);
@@ -968,40 +970,65 @@ CREATE OR REPLACE FUNCTION public.get_accessible_agent_ids(p_user_id uuid)
  SET search_path TO 'public'
 AS $function$
 DECLARE
-    v_role user_role_v2;
-    v_agent_id uuid;
-    v_org_id uuid;
+  v_role     public.user_role_v2;
+  v_agent_id uuid;
+  v_org_id   uuid;
+  v_jwt_meta jsonb;
+  v_used_jwt boolean := false;
 BEGIN
-    SELECT role_v2, users.agent_id, org_id
-    INTO v_role, v_agent_id, v_org_id
-    FROM public.users WHERE id = p_user_id;
+  -- JWT fast path (self-lookup only). Cross-user lookups must hit the
+  -- target's users row — caller's JWT describes the caller.
+  IF p_user_id = auth.uid() THEN
+    v_jwt_meta := auth.jwt() -> 'app_metadata';
 
-    -- ORG_ADMIN and WAREHOUSE_STAFF see all agents in org
-    IF v_role IN ('ORG_ADMIN', 'WAREHOUSE_STAFF') THEN
-        RETURN QUERY
-        SELECT a.id FROM public.agents a
-        WHERE a.org_id = v_org_id;
-        RETURN;
+    IF v_jwt_meta IS NOT NULL THEN
+      v_role     := NULLIF(v_jwt_meta ->> 'role_v2', '')::public.user_role_v2;
+      v_agent_id := NULLIF(v_jwt_meta ->> 'agent_id', '')::uuid;
+      v_org_id   := NULLIF(v_jwt_meta ->> 'org_id', '')::uuid;
+
+      IF v_role IS NOT NULL THEN
+        IF v_role IN ('ORG_ADMIN', 'WAREHOUSE_STAFF') AND v_org_id IS NOT NULL THEN
+          v_used_jwt := true;
+        ELSIF v_role IN ('AGENT_ADMIN', 'AGENT_STAFF') AND v_agent_id IS NOT NULL THEN
+          v_used_jwt := true;
+        ELSIF v_role = 'CUSTOMER' THEN
+          v_used_jwt := true;
+        END IF;
+      END IF;
     END IF;
+  END IF;
 
-    -- AGENT_ADMIN sees own agent + all descendants
-    IF v_role = 'AGENT_ADMIN' AND v_agent_id IS NOT NULL THEN
-        RETURN QUERY
-        SELECT ac.descendant_id
-        FROM public.agent_closure ac
-        WHERE ac.ancestor_id = v_agent_id;
-        RETURN;
-    END IF;
+  -- DB fallback: different user, service_role / cron, or pre-027
+  -- token missing the agent_id claim.
+  IF NOT v_used_jwt THEN
+    SELECT u.role_v2, u.agent_id, u.org_id
+      INTO v_role, v_agent_id, v_org_id
+      FROM public.users u
+     WHERE u.id = p_user_id;
+  END IF;
 
-    -- AGENT_STAFF sees only own agent
-    IF v_role = 'AGENT_STAFF' AND v_agent_id IS NOT NULL THEN
-        RETURN QUERY
-        SELECT v_agent_id;
-        RETURN;
-    END IF;
-
-    -- Fallback: return nothing
+  -- Role-branching (unchanged from pre-028).
+  IF v_role IN ('ORG_ADMIN', 'WAREHOUSE_STAFF') THEN
+    RETURN QUERY
+      SELECT a.id FROM public.agents a WHERE a.org_id = v_org_id;
     RETURN;
+  END IF;
+
+  IF v_role = 'AGENT_ADMIN' AND v_agent_id IS NOT NULL THEN
+    RETURN QUERY
+      SELECT ac.descendant_id
+        FROM public.agent_closure ac
+       WHERE ac.ancestor_id = v_agent_id;
+    RETURN;
+  END IF;
+
+  IF v_role = 'AGENT_STAFF' AND v_agent_id IS NOT NULL THEN
+    RETURN QUERY SELECT v_agent_id;
+    RETURN;
+  END IF;
+
+  -- CUSTOMER or unassigned — empty set.
+  RETURN;
 END;
 $function$;
 
@@ -1424,50 +1451,108 @@ CREATE OR REPLACE FUNCTION public.user_has_permission(p_user_id uuid, p_permissi
  SET search_path TO 'public'
 AS $function$
 DECLARE
-    v_role user_role_v2;
-    v_user_override boolean;
-    v_is_hard boolean;
-    v_role_has_default boolean;
+  v_role             public.user_role_v2;
+  v_user_override    boolean;
+  v_is_hard          boolean;
+  v_role_has_default boolean;
+  v_jwt_meta         jsonb;
 BEGIN
-    -- Get user's role
-    SELECT role_v2 INTO v_role
-    FROM public.users WHERE id = p_user_id;
-
-    -- If no role_v2 set, deny
-    IF v_role IS NULL THEN
-        RETURN false;
+  -- JWT fast path (role_v2 lookup only). Only usable when the caller
+  -- is asking about their own access. auth.jwt() may be NULL for
+  -- service_role / cron — fall through to DB in that case.
+  IF p_user_id = auth.uid() THEN
+    v_jwt_meta := auth.jwt() -> 'app_metadata';
+    IF v_jwt_meta IS NOT NULL THEN
+      v_role := NULLIF(v_jwt_meta ->> 'role_v2', '')::public.user_role_v2;
     END IF;
+  END IF;
 
-    -- 1. Check explicit user override (highest priority)
-    SELECT granted INTO v_user_override
-    FROM public.user_permissions
-    WHERE user_id = p_user_id
-      AND permission_key = p_permission_key
-      AND (expires_at IS NULL OR expires_at > now());
+  -- DB fallback: different user, no JWT, or missing/empty role_v2.
+  IF v_role IS NULL THEN
+    SELECT u.role_v2 INTO v_role
+      FROM public.users u
+     WHERE u.id = p_user_id;
+  END IF;
 
-    IF FOUND THEN
-        -- Hard constraint check: non-ORG_ADMIN cannot be granted hard-constrained permissions
-        SELECT is_hard_constraint INTO v_is_hard
-        FROM public.permission_keys WHERE id = p_permission_key;
-
-        IF v_is_hard AND v_role != 'ORG_ADMIN' AND v_user_override = true THEN
-            RETURN false;  -- Hard deny: cannot override hard constraints for non-admins
-        END IF;
-
-        RETURN v_user_override;
-    END IF;
-
-    -- 2. Check role default
-    SELECT true INTO v_role_has_default
-    FROM public.role_permission_defaults
-    WHERE role = v_role AND permission_key = p_permission_key;
-
-    IF FOUND THEN
-        RETURN true;
-    END IF;
-
-    -- 3. Default: deny
+  IF v_role IS NULL THEN
     RETURN false;
+  END IF;
+
+  -- 1. Explicit user override (highest priority).
+  SELECT granted INTO v_user_override
+    FROM public.user_permissions
+   WHERE user_id = p_user_id
+     AND permission_key = p_permission_key
+     AND (expires_at IS NULL OR expires_at > now());
+
+  IF FOUND THEN
+    -- Hard-constraint guard: non-ORG_ADMIN cannot be granted hard-
+    -- constrained permissions even if an override exists.
+    SELECT is_hard_constraint INTO v_is_hard
+      FROM public.permission_keys
+     WHERE id = p_permission_key;
+
+    IF v_is_hard AND v_role != 'ORG_ADMIN' AND v_user_override = true THEN
+      RETURN false;
+    END IF;
+
+    RETURN v_user_override;
+  END IF;
+
+  -- 2. Role default.
+  SELECT true INTO v_role_has_default
+    FROM public.role_permission_defaults
+   WHERE role = v_role
+     AND permission_key = p_permission_key;
+
+  IF FOUND THEN
+    RETURN true;
+  END IF;
+
+  -- 3. Deny by default.
+  RETURN false;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.users_block_privileged_column_changes()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY INVOKER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+DECLARE
+  v_bypass boolean;
+BEGIN
+  -- BYPASSRLS roles (service_role / postgres / supabase_admin) are the
+  -- trusted-server callers; let them through. One indexed catalog hit.
+  SELECT rolbypassrls
+    INTO v_bypass
+    FROM pg_catalog.pg_roles
+   WHERE rolname = current_user;
+
+  IF v_bypass THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.role_v2 IS DISTINCT FROM OLD.role_v2 THEN
+    RAISE EXCEPTION
+      'column "role_v2" cannot be changed via direct client update; use POST /api/admin/set-user-role'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.agent_id IS DISTINCT FROM OLD.agent_id THEN
+    RAISE EXCEPTION
+      'column "agent_id" cannot be changed via direct client update; use POST /api/admin/reassign-agent'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.role_id IS DISTINCT FROM OLD.role_id THEN
+    RAISE EXCEPTION
+      'column "role_id" cannot be changed via direct client update; use POST /api/admin/set-user-role'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
 END;
 $function$;
 
@@ -1503,6 +1588,9 @@ CREATE TRIGGER trg_packages_updated BEFORE UPDATE ON public.packages FOR EACH RO
 CREATE TRIGGER trg_pricing_tiers_updated_at BEFORE UPDATE ON public.pricing_tiers FOR EACH ROW EXECUTE FUNCTION set_pricing_tiers_updated_at();
 
 CREATE TRIGGER trg_generate_customer_number BEFORE INSERT ON public.users FOR EACH ROW EXECUTE FUNCTION generate_customer_number();
+-- Sorts before trg_users_updated so the privileged-column rejection fires
+-- before the updated_at side-effect (migration 030).
+CREATE TRIGGER trg_users_block_privileged_column_changes BEFORE UPDATE OF role_v2, agent_id, role_id ON public.users FOR EACH ROW EXECUTE FUNCTION users_block_privileged_column_changes();
 CREATE TRIGGER trg_users_updated BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER set_warehouse_locations_updated_at BEFORE UPDATE ON public.warehouse_locations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -1645,7 +1733,7 @@ CREATE POLICY invoices_insert_v2 ON public.invoices
   WITH CHECK ((org_id = ( SELECT auth_org_id() AS auth_org_id)) AND user_has_permission(( SELECT auth.uid() AS uid), 'invoices:create'::text));
 CREATE POLICY invoices_select_v2 ON public.invoices
   FOR SELECT TO authenticated
-  USING (((org_id = ( SELECT auth_org_id() AS auth_org_id)) AND ((( SELECT auth_role_v2() AS auth_role_v2) = 'ORG_ADMIN'::user_role_v2) OR (billed_by_agent_id IN ( SELECT get_accessible_agent_ids(( SELECT auth.uid() AS uid)) AS get_accessible_agent_ids)) OR (billed_to_agent_id IN ( SELECT get_accessible_agent_ids(( SELECT auth.uid() AS uid)) AS get_accessible_agent_ids)) OR ((billed_by_agent_id IS NULL) AND (( SELECT auth_role_v2() AS auth_role_v2) = ANY (ARRAY['ORG_ADMIN'::user_role_v2, 'WAREHOUSE_STAFF'::user_role_v2]))))) OR ((( SELECT auth_role_v2() AS auth_role_v2) = 'CUSTOMER'::user_role_v2) AND (customer_id = ( SELECT auth.uid() AS uid)) AND (deleted_at IS NULL)));
+  USING (((org_id = ( SELECT auth_org_id() AS auth_org_id)) AND ((( SELECT auth_role_v2() AS auth_role_v2) = 'ORG_ADMIN'::user_role_v2) OR (user_has_permission(( SELECT auth.uid() AS uid), 'invoices:view'::text) AND ((billed_by_agent_id IN ( SELECT get_accessible_agent_ids(( SELECT auth.uid() AS uid)) AS get_accessible_agent_ids)) OR (billed_to_agent_id IN ( SELECT get_accessible_agent_ids(( SELECT auth.uid() AS uid)) AS get_accessible_agent_ids)))) OR ((billed_by_agent_id IS NULL) AND (( SELECT auth_role_v2() AS auth_role_v2) = ANY (ARRAY['ORG_ADMIN'::user_role_v2, 'WAREHOUSE_STAFF'::user_role_v2]))))) OR ((( SELECT auth_role_v2() AS auth_role_v2) = 'CUSTOMER'::user_role_v2) AND (customer_id = ( SELECT auth.uid() AS uid)) AND (deleted_at IS NULL)));
 CREATE POLICY invoices_update_v2 ON public.invoices
   FOR UPDATE TO public
   USING ((org_id = ( SELECT auth_org_id() AS auth_org_id)) AND user_has_permission(( SELECT auth.uid() AS uid), 'invoices:edit'::text));
@@ -1687,13 +1775,13 @@ CREATE POLICY org_update_v2 ON public.organizations
 -- package_photos
 CREATE POLICY photos_delete_v2 ON public.package_photos
   FOR DELETE TO public
-  USING (EXISTS ( SELECT 1 FROM packages p WHERE ((p.id = package_photos.package_id) AND (p.org_id = ( SELECT auth_org_id() AS auth_org_id)) AND (( SELECT auth_role_v2() AS auth_role_v2) = ANY (ARRAY['ORG_ADMIN'::user_role_v2, 'WAREHOUSE_STAFF'::user_role_v2])))));
+  USING ((EXISTS ( SELECT 1 FROM packages p WHERE (p.id = package_photos.package_id))) AND (( SELECT auth_role_v2() AS auth_role_v2) = ANY (ARRAY['ORG_ADMIN'::user_role_v2, 'WAREHOUSE_STAFF'::user_role_v2])));
 CREATE POLICY photos_insert_v2 ON public.package_photos
   FOR INSERT TO public
-  WITH CHECK ((EXISTS ( SELECT 1 FROM packages p WHERE ((p.id = package_photos.package_id) AND (p.org_id = ( SELECT auth_org_id() AS auth_org_id))))) AND user_has_permission(( SELECT auth.uid() AS uid), 'packages:edit'::text));
+  WITH CHECK ((EXISTS ( SELECT 1 FROM packages p WHERE (p.id = package_photos.package_id))) AND user_has_permission(( SELECT auth.uid() AS uid), 'packages:edit'::text));
 CREATE POLICY photos_select_v2 ON public.package_photos
   FOR SELECT TO public
-  USING (EXISTS ( SELECT 1 FROM packages p WHERE ((p.id = package_photos.package_id) AND (p.org_id = ( SELECT auth_org_id() AS auth_org_id)))));
+  USING (EXISTS ( SELECT 1 FROM packages p WHERE (p.id = package_photos.package_id)));
 
 -- package_statuses
 CREATE POLICY package_statuses_delete_v2 ON public.package_statuses

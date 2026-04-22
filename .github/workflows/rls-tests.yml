@@ -4,10 +4,12 @@
 # seeded Supabase stack on every PR / push that touches RLS-relevant code.
 #
 # Why this workflow exists:
-#   The Tier 6 audit (2026-04-19) shipped policies (migrations 016-024) that
-#   close real cross-tenant + self-escalation holes. tests/rls/ encodes those
-#   policies as ROLLBACK-only PostgreSQL scripts. Running them locally before
-#   every release is brittle; this workflow makes them gate every PR.
+#   The Tier 6 audit (2026-04-19, closed 2026-04-21) shipped policies +
+#   helper rewrites (migrations 016-030) that close real cross-tenant +
+#   self-escalation holes and move the hot RLS helpers to JWT-first
+#   claim resolution. tests/rls/ encodes those policies as ROLLBACK-only
+#   PostgreSQL scripts. Running them locally before every release is
+#   brittle; this workflow makes them gate every PR.
 #
 # Why it does NOT use `supabase db reset`:
 #   Migrations 001-009 reflect the schema as it existed when those files were
@@ -203,7 +205,7 @@ jobs:
                   GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;"
 
       # Apply the prod-equivalent schema snapshot. This is the heavy lift —
-      # everything migrations 001-024 (and the out-of-band Studio drift)
+      # everything migrations 001-030 (and the out-of-band Studio drift)
       # would have created. After this step the local DB has the same
       # schema, helpers, RLS policies, and grants as prod did at the cutoff
       # version recorded in supabase/_ci_baseline.cutoff.
@@ -220,8 +222,8 @@ jobs:
       # migration the snapshot already includes. Anything strictly greater
       # than that gets replayed in numeric order.
       #
-      # Today (cutoff=024, latest migration=024) this loop matches nothing
-      # and exits silently. The first time someone adds a 025_*.sql file,
+      # Today (cutoff=030, latest migration=030) this loop matches nothing
+      # and exits silently. The first time someone adds a 031_*.sql file,
       # it runs that migration here; the next baseline regeneration will
       # absorb it and bump the cutoff.
       - name: Apply post-cutoff migrations
