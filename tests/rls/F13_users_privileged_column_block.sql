@@ -99,7 +99,13 @@ BEGIN
     v_role_for_c    AS role_for_c;
 END $$;
 
-GRANT SELECT ON f13_ctx TO authenticated;
+-- BOTH roles need the grant: Cases A-D run as `authenticated`, but Case E
+-- switches to `service_role` to verify the trigger lets BYPASSRLS roles
+-- through. BYPASSRLS bypasses RLS — NOT object-level table grants — so
+-- service_role still needs an explicit SELECT on this temp table.
+-- (Run #1 caught the missing authenticated grant; run #4 caught the missing
+-- service_role grant. Both fixed here together to close the bug class.)
+GRANT SELECT ON f13_ctx TO authenticated, service_role;
 
 -- ────────────────────────────────────────────────────────────────────────
 -- Case A: ORG_ADMIN tries to change another user's role_v2 directly.
