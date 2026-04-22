@@ -68,6 +68,10 @@
 \i tests/rls/F6c_user_has_permission_jwt.sql
 
 \echo ''
+\echo '--- F-13: users privileged column-write block (030) ---'
+\i tests/rls/F13_users_privileged_column_block.sql
+
+\echo ''
 \echo '====================================================================='
-\echo 'All tests passed. Tier 6 (016-029) + F-8 + F-9 + F-10 + F-6b + F-6c covered.'
+\echo 'All tests passed. Tier 6 (016-029) + Q6 (030) + F-8 + F-9 + F-10 + F-6b + F-6c + F-13 covered.'
 \echo '====================================================================='

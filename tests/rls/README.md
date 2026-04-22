@@ -77,13 +77,14 @@ If you add a test for a new finding, prefer computing ground truth at test time 
 | `F12_for_all_role_gates.sql` | CUSTOMER can't write to `org_settings` / `tags` / `label_templates` / `warehouse_locations` / `package_tags` | 018 |
 | `F6b_get_accessible_agent_ids_jwt.sql` | `get_accessible_agent_ids` reads `agent_id`/`role_v2`/`org_id` from JWT `app_metadata` first; falls back to `public.users` on cross-user lookup, service_role context, or pre-027 token (missing `agent_id` claim). Forged-claim case proves fast path is honored | 027 + 028 |
 | `F6c_user_has_permission_jwt.sql` | `user_has_permission` reads `role_v2` from JWT `app_metadata` when `p_user_id = auth.uid()`; falls back to `public.users` on cross-user lookup / missing claim. Override + hard-constraint + role-default branches unchanged; forged-claim case proves fast path is honored, hard-constraint case proves the guard still fires when role came from JWT | 029 |
+| `F13_users_privileged_column_block.sql` | ORG_ADMIN can't change another in-org user's `role_v2` / `agent_id` / `role_id` via direct PostgREST (closes the §6 Q6 gap on the ORG_ADMIN-updates-other branch of `users_update_v2`). Routine columns (`is_active`) still succeed; service_role still mutates freely (so `/api/admin/reassign-agent` works) | 030 |
 | `cross_tenant_isolation.sql` | Org-scoping baseline: no cross-tenant leak on packages; AGENT_STAFF can't UPDATE another user | always-on |
 | `run_all.sql` | `\i`-concatenation of all the above in dependency order | — |
 
 ## When to run
 
 - Before cutting a release tag.
-- After any migration that touches `supabase/migrations/*.sql` under or adjacent to the RLS policy files (016-024 + any new policy migration).
+- After any migration that touches `supabase/migrations/*.sql` under or adjacent to the RLS policy files (016-030 + any new policy migration).
 - Before merging any PR that changes helper functions (`auth_role_v2`, `auth_org_id`, `user_has_permission`, `get_accessible_agent_ids`, `custom_access_token_hook`).
 
 ## CI
@@ -102,7 +103,7 @@ The CI job:
 
 1. Boots a local Supabase stack via `supabase start` (Postgres 17, matching prod).
 2. Applies `supabase/_ci_baseline.sql` — a prod-equivalent schema snapshot reconstructed via Supabase MCP introspection (see "Schema baseline" below for what's in it and how to regenerate).
-3. Replays any migrations whose numeric prefix is **strictly greater** than the version in `supabase/_ci_baseline.cutoff`. Today the cutoff is `024`, so this loop matches nothing; once someone adds `025_*.sql` it runs that migration here.
+3. Replays any migrations whose numeric prefix is **strictly greater** than the version in `supabase/_ci_baseline.cutoff`. Today the cutoff is `030`, so this loop matches nothing; once someone adds `031_*.sql` it runs that migration here.
 4. Loads `supabase/seed.sql`.
 5. Verifies the seed produced the expected fixture shape (5 users, Ana with 2 packages + 2 invoices, ORG_ADMIN role carries `invoices:edit`). Fails fast with a clear error if not.
 6. Runs `psql -v ON_ERROR_STOP=1 -f tests/rls/run_all.sql`. Any `RAISE EXCEPTION` from an assertion aborts the whole run.
@@ -124,7 +125,7 @@ The same commands the workflow uses work locally if you have the Supabase CLI in
 supabase start
 psql "postgresql://postgres:postgres@localhost:54322/postgres" \
   -v ON_ERROR_STOP=1 -f supabase/_ci_baseline.sql
-# Replay anything > the cutoff version (currently 024 — none today):
+# Replay anything > the cutoff version (currently 030 — none today):
 cutoff=$(tr -d '[:space:]' < supabase/_ci_baseline.cutoff)
 for f in $(ls supabase/migrations/*.sql | sort); do
   ver=$(basename "$f" | cut -d_ -f1 | sed 's/^0*//'); ver=${ver:-0}
@@ -145,7 +146,7 @@ psql "postgresql://postgres:postgres@localhost:54322/postgres" \
 
 ## Schema baseline
 
-`supabase/_ci_baseline.sql` is a hand-stitched, pg_dump-equivalent snapshot of the **public schema** of prod project `ilguqphtephoqlshgpza` as it existed at migration `024` (recorded in `supabase/_ci_baseline.cutoff`). It is the only thing CI uses to construct the schema; the workflow does **not** call `supabase db reset`.
+`supabase/_ci_baseline.sql` is a hand-stitched, pg_dump-equivalent snapshot of the **public schema** of prod project `ilguqphtephoqlshgpza` as it existed at migration `030` (recorded in `supabase/_ci_baseline.cutoff`). It is the only thing CI uses to construct the schema; the workflow does **not** call `supabase db reset`.
 
 The snapshot deliberately includes only what an empty Supabase Postgres lacks:
 
@@ -155,8 +156,8 @@ The snapshot deliberately includes only what an empty Supabase Postgres lacks:
 - 28 `CREATE TABLE` statements, with primary keys / unique / check constraints inline.
 - All foreign keys as separate `ALTER TABLE ... ADD CONSTRAINT` statements (so table create order doesn't have to be topological).
 - ~110 secondary indexes (btree, gin trigram, partial `WHERE`).
-- 24 functions (the `auth_*` helpers, `user_has_permission`, `get_accessible_agent_ids`, `custom_access_token_hook`, `handle_new_user`, all trigger functions).
-- 19 triggers.
+- 25 functions (the `auth_*` helpers, `user_has_permission`, `get_accessible_agent_ids`, `custom_access_token_hook`, `handle_new_user`, all trigger functions including `users_block_privileged_column_changes`).
+- 20 triggers.
 - 28 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` statements.
 - 76 `CREATE POLICY` statements — every CUSTOMER-facing SELECT policy already includes the `deleted_at IS NULL` filter from migration 024, and every policy uses the `( SELECT auth_org_id() )` initplan-wrap pattern from migration 011.
 - 32 `permission_keys` rows under "11. REFERENCE / LOOKUP DATA" — the global permission catalog that pre-024 migrations `INSERT`ed and that `role_permissions` / `user_permissions` FK to. Schema-only dumps drop these.
