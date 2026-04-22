@@ -1,7 +1,7 @@
 # ENVIATO WMS V2 — Go-Live Readiness Assessment
 
-**Updated:** April 19, 2026 (late — Phase 10A applied live)
-**Status:** 🟡 **GO-LIVE STILL BLOCKED**, but the three CRITICAL / HIGH in-tenant exploits from the Tier 6.0 RLS audit (F-1, F-2, F-3, F-12) were **remediated live on 2026-04-19**. Migrations 016, 017, 018 were applied via Supabase MCP and all four attack paths are now confirmed blocked by live impersonation tests. The remaining blockers are product-gated (Phase 10B — CUSTOMER read surface, Phase 10F — recipient role backfill + registration fix) and performance/hardening (Phase 10C–10E).
+**Updated:** April 22, 2026 (Tier 7 scale-readiness audit added after Q6 Phase 1 shipment)
+**Status:** 🟡 **GO-LIVE STILL BLOCKED** for multi-tenant public launch. Q6 Phase 1 landed on 2026-04-22 — migration 030 + `/api/admin/reassign-agent` closed the ORG_ADMIN-updates-other silent escalation on `role_v2` / `agent_id` / `role_id`. Tier 6.0 Phase 10A exploits (F-1, F-2, F-3, F-12) remain fixed. Tier 7 scale audit (2026-04-22) surfaced 18 new items across image pipeline, rate limiting, recipient read caching, audit trail, JWT, and index coverage — all block the multi-tenant scale rollout, none block internal-only operation. Remaining blockers are product-gated (Phase 10B — CUSTOMER read surface, Phase 10F — recipient role backfill + registration fix), performance/hardening (Phase 10C–10E), and scale readiness (Tier 7A–7C).
 
 The prior 76-item tracker (P0–P3) remains 76/76 complete. Tier 6.0 audit: **5 of 12 findings fixed** (F-1, F-2, F-3, F-12, partial F-7 scope). 7 remain.
 
@@ -130,6 +130,70 @@ HP5 found that even after Phase 10A, recipients still see 0 packages because the
 | Optional: `CHECK (role_v2 IS NOT NULL)` on `users` | Once backfill completes, add a `NOT NULL` constraint so no future row can be inserted without a role. | F-7 |
 
 **Dependency graph:** 021 backfill → registration code fix → NOT NULL constraint. Can start immediately once product confirms all 10 legacy NULL rows are recipients (HP5 investigation indicates they are, but spot-check first).
+
+---
+
+## TIER 7 — SCALE READINESS AUDIT (2026-04-22)
+
+**Context:** Audit triggered by the question: *"Can this system survive thousands of customers, tens of thousands of package rows, and multiple daily recipient logins without bogging down or opening new vulnerabilities?"* Four parallel Explore agents audited the codebase covering auth / rate limiting, recipient-facing read paths, image / storage scaling, and database query patterns.
+
+**Verdict:** 🟡 Not today. The RLS + module foundation (post-Q6 Phase 1) is sound. Three surfaces stacked on top of that foundation will fail somewhere between 500 and 2,000 customers: the photo pipeline, the rate limiter, and the recipient read path. Plus smaller gaps in audit trail wiring, JWT revocation, connection pooling, and index coverage.
+
+**Scope note:** All items block multi-tenant scale rollout. None block the current internal-only posture. Sequenced by customer-count tier — 7A before #100, 7B before #500, 7C before #1,000.
+
+### Tier 7A — Before customer #100 (security blockers for public launch)
+
+Each of these is a live security hole, not a performance concern. At 10 internal users it's theoretical; at 100 paying customers it's an incident or an SLA conversation.
+
+| # | Area | Finding | File:Line | Fix |
+|---|------|---------|-----------|-----|
+| SR-1 | Storage | `package-photos` bucket created as `public: true` with ZERO `storage.objects` RLS policies. Any authenticated user in any org can fetch any photo if they know/guess the UUID. Table-level `package_photos` RLS is scoped correctly but irrelevant — the underlying storage objects bypass it entirely. | `src/app/api/upload-photo/route.ts:114-118` | New migration `031_storage_photos_rls.sql`: add org-scoped `storage.objects` policies on the `package-photos` bucket (tenant isolation via the path-prefix pattern). Consider moving to private bucket + short-TTL signed URLs. |
+| SR-2 | Rate limiting | In-memory `Map<string, RateLimitEntry>` limiter. Explicitly documented as broken at scale ("for strict enforcement at scale, swap to Redis"). On Vercel, state resets per cold start and desyncs across concurrent lambda instances — a caller doing 1,000 rps across 10 lambdas sees 100 rps per instance, all under the 30/min limit. | `src/shared/lib/rate-limit.ts:35` | Swap to Upstash Redis via `@upstash/ratelimit`. Add `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` to env + `.env.example`. |
+| SR-3 | Rate limiting | Limiter keyed by IP only. One corporate office behind NAT shares one bucket — a single compromised account burns the 30/min limit in seconds and locks out legitimate traffic from that office. | `src/shared/lib/rate-limit.ts:50-56` | Compound key: `user_id + route` for authenticated routes, fall back to IP only for anonymous endpoints. |
+| SR-4 | Login surface | No rate limiter on `/auth/callback` (magic-link code exchange). Zero credential-stuffing / enumeration defense on the highest-value endpoint. | `src/app/auth/callback/route.ts` | Apply the Upstash-backed limiter to the callback route — strict (10/min per IP, 5/min per email if extractable). |
+| SR-5 | Login surface | No bot protection on `/login`. No Turnstile / hCaptcha. Credential stuffing is the week-one attack against any publicly visible B2B login. | `src/app/login/` + `src/app/auth/callback/route.ts` | Cloudflare Turnstile on the login page; add `NEXT_PUBLIC_TURNSTILE_SITE_KEY` + server-side token verification before magic-link send / password submit. |
+| SR-6 | CSRF | CSRF check explicitly allows requests with missing Origin AND Referer ("allow for now"). Any non-browser client (curl, Python, Node) bypasses CSRF entirely with the default header set. | `src/shared/lib/csrf.ts:52-54` | Tighten to reject when both are missing. Documented bypass for server-to-server via `service_role` + a signed `X-Enviato-Server-Key` header. |
+
+### Tier 7B — Before customer #500 (performance + compliance)
+
+At 500 customers these show up in latency dashboards and audit requests. At 2,000 they are outages and failed compliance reviews.
+
+| # | Area | Finding | File:Line | Fix |
+|---|------|---------|-----------|-----|
+| SR-7 | Storage | No image resizing / thumbnailing pipeline. 10 MB phone photos served raw. A list view with 100 packages × 5 photos fetches ~3.5 GB of unresized imagery for a 300px grid. | Upload route + `src/modules/packages/components/PhotoGallery.tsx:75` | Server-side `sharp` resize on upload. Emit original + `-sm` (400px) + `-md` (1024px) variants, store all three URLs on the `package_photos` row. |
+| SR-8 | Storage | `PhotoGallery` uses bare `<img>` tags despite `next.config.js` having the Supabase hostname registered for the Next.js Image optimizer. All optimizer gains forfeited. | `src/modules/packages/components/PhotoGallery.tsx:75` | Migrate to `<Image>` from `next/image`. Add responsive `sizes` and `loading="lazy"`. |
+| SR-9 | Reads | Admin/recipient list queries include a nested `photos:package_photos(...)` subselect unconditionally. 1,000 packages × 5 photo rows = 5,000 rows fetched even when the list UI shows no thumbnail. | `src/app/(dashboard)/admin/packages/page.tsx:279-290` | Drop the `photos` subselect from list queries. Fetch photos only on the detail view (already done there). If the list needs an indicator, add a `has_photos BOOLEAN` column maintained by a trigger. |
+| SR-10 | Reads | No caching layer on client list pages. Raw `useEffect` + `await supabase.*` — every tab switch hits Postgres fresh. A recipient checking 5x/day = 5 fresh queries per user per day with zero cache hits. | Recipient/admin pages under `src/app/(dashboard)/**/page.tsx` | Move recipient list queries to server components with Next.js `revalidate: 30-60`. For interactive client fetches, wrap in React Query (already installed; currently used only for reference data). |
+| SR-11 | Reads | `AuthProvider` re-fetches user + org + permissions on every `visibilitychange` event. 10 tab switches/day × 1,000 users = 10,000 unnecessary `users` reads/day. | `src/modules/auth/AuthProvider.tsx` (`handleVisibility` effect) | Throttle: only re-fetch if staleness > 60s. Prefer re-hydrating from JWT claims in the provider; hit the DB only on explicit refresh. |
+| SR-12 | Audit | `activity_log` table exists (`001_schema.sql:325-339`) but NONE of the `/api/admin/*` routes insert into it. Admin actions go to `logger.error()` only — ephemeral on serverless. No durable trail for role changes, deletes, reassignments, or privileged column attempts. Compliance blocker (SOC2 / GDPR audit). | `src/app/api/admin/**/route.ts` | Shared `recordActivity()` helper in `src/shared/lib/audit.ts`. Call from every `/api/admin/*` route on success and on rejected attempts. Complements migration 030's trigger (which rejects) — the app records the attempt. |
+| SR-13 | DB | Connection pooling mode unverified. Supabase offers session (port 5432) and transaction (port 6543) pooler modes; only transaction mode scales for serverless. Session mode will exhaust the pool under Vercel fan-out. | `.env.example` / `src/shared/lib/supabase*` | Verify `DATABASE_URL` or Supabase client config uses the Supavisor pooler on port 6543 in transaction mode. Document canonical connection string in `.env.example`. |
+
+### Tier 7C — Before customer #1,000 (optimizations + hardening)
+
+Not urgent. Worth completing before scaling past low four figures.
+
+| # | Area | Finding | File:Line | Fix |
+|---|------|---------|-----------|-----|
+| SR-14 | JWT | 1-hour access token TTL with `role_v2` / `agent_id` / `role_id` / `org_id` baked into `app_metadata`. Privilege revocation takes up to 60 min to propagate. (Already tracked as F-6.) | `src/middleware.ts:82-106` + Supabase Auth settings | Shorten access token TTL to 15 min; rely on refresh token rotation (built into Supabase client). Alternative: `revoked_sessions` table checked in middleware. |
+| SR-15 | DB | Full index coverage audit on hot tables (packages, shipments, recipients, users, activity_log, package_photos) incomplete — one audit agent couldn't mount the filesystem. Partial confirmation: `idx_packages_customer`, `idx_packages_checked_in` exist. | `supabase/migrations/*.sql` | Re-run the index audit. Add missing composite indexes for common filter combos (e.g. `(org_id, status, checked_in_at DESC)`). Verify every RLS policy filter column has index support. |
+| SR-16 | Storage | Supabase Storage is origin-only; no CDN in front. EU recipient + US origin = ~200 ms round-trip × 10 MB per fetch. | Delivery path | Put Cloudflare in front of Supabase Storage via custom domain + edge caching. Or migrate hot photos to Cloudinary / Mux for transparent resizing + edge delivery. |
+| SR-17 | Upload | Upload route is server-side — 10 MB uploads consume Next.js function CPU + memory. At 50K images × 10 MB = 500 GB function I/O, cold starts and timeouts multiply under warehouse-staff concurrent uploads. | `src/app/api/upload-photo/route.ts` | Direct-to-bucket signed-URL uploads: client POSTs to `/api/request-upload-url` (authz + rate-limit), server returns a short-lived signed URL, client PUTs directly to Supabase Storage. Post-upload webhook fires the SR-7 resize job. |
+| SR-18 | Load | System has never been tested at target concurrency. Unknown failure modes until observed under burst. | N/A | k6 or Artillery load test at 2× target concurrency × worst-case query shape. Record p95/p99 latency, connection pool exhaustion point, error budget. Gate multi-tenant rollout on green. |
+
+### Tier 7 dependency notes
+
+- **SR-7 and SR-17 pair naturally** — if you do SR-17 first, the post-upload webhook is the right place to kick off SR-7's resize job.
+- **SR-12 (audit log) pairs with migration 030** — the trigger rejects the attempt, the app records that a rejected attempt happened. Defense in depth.
+- **SR-13 (pooler verification)** is a 5-minute check. If it turns out we're in session mode, promote SR-13 to Tier 7A — that's an outage waiting to happen, not an optimization.
+- **SR-2 + SR-5 + SR-6 should land together** — they are the same attack surface viewed from three angles (rate, bot, CSRF). Piecemeal is nearly as vulnerable as none.
+
+### Observability gaps flagged but not audited
+
+- Sentry or equivalent error tracking: unknown status. Worth confirming.
+- APM / query-level telemetry (Datadog / Axiom / Supabase built-in logs): unknown.
+- Alerting on 429 rate, 5xx spikes, pool exhaustion: unknown.
+
+These are a natural Tier 7D pass once 7A–7C ship. The Q6 / Q7 work has focused on authz correctness; observability is the next seam to pressure-test.
 
 ---
 
@@ -381,9 +445,13 @@ CREATE TABLE IF NOT EXISTS org_settings (
 | **Original tracker** | **76** | **76** | **0** ✅ |
 | Tier 6.0 RLS audit (Phase 10A — CRITICAL/HIGH) | 4 | **4** | **0** ✅ (F-1, F-2, F-3, F-12) |
 | Tier 6.0 RLS audit (Phase 10B–F — product/perf/harden) | 8 | **0** | **8** 🟡 |
-| **GRAND TOTAL** | **88** | **80** | **8** |
+| Q6 Phase 1 (privileged-write block — migration 030 + `/api/admin/reassign-agent`) | 1 | **1** | **0** ✅ (applied 2026-04-22) |
+| Tier 7 Scale audit — 7A (pre-#100 security blockers) | 6 | **0** | **6** 🔴 (SR-1 through SR-6) |
+| Tier 7 Scale audit — 7B (pre-#500 performance + compliance) | 7 | **0** | **7** 🟡 (SR-7 through SR-13) |
+| Tier 7 Scale audit — 7C (pre-#1,000 optimizations + hardening) | 5 | **0** | **5** 🔵 (SR-14 through SR-18) |
+| **GRAND TOTAL** | **107** | **81** | **26** |
 
-**Original P0–P3 tracker is complete.** Tier 6.0 RLS audit (2026-04-19) added 12 new findings, 2 CRITICAL. Phase 10A (CRITICAL + F-3 + F-12) **landed live on 2026-04-19**. Phase 10B–F remain before multi-sided-platform rollout.
+**Original P0–P3 tracker is complete.** Tier 6.0 RLS audit (2026-04-19) added 12 findings, 2 CRITICAL — Phase 10A landed live 2026-04-19. Q6 Phase 1 (2026-04-22) closed the ORG_ADMIN-updates-other privileged column write path. Tier 7 scale-readiness audit (2026-04-22) added 18 findings blocking multi-tenant public launch — none block current internal-only operation. Phases 10B–F and Tier 7A–7C remain before multi-sided-platform rollout at scale.
 
 *Note: 32+ additional fixes completed outside the original tracker scope (including 7 package detail bugs April 7, 4 Vercel deployment fixes April 12). Total completed work items: **88+**.*
 
@@ -496,4 +564,38 @@ From §6 of the audit report — needed from product:
 3. **AGENT_STAFF invoice line edits (Q3)** — Can AGENT_STAFF edit invoice lines for invoices where `invoice.agent_id = their_agent_id`, or is that ORG_ADMIN-only?
 4. **JWT TTL tolerance (Q4)** — Is a 1-hour TTL on role/org claims acceptable? Role changes take up to 1h to propagate until a user re-logs.
 5. **`customers_v2.user_id` self-link (Q5)** — Does the `customers_v2` table have a `user_id` column that links to `auth.users`, or do we rely on `users.customer_id`? Affects the JOIN shape for `019`.
-6. **API-route vs. direct mutation (Q6)** — For privileged mutations (role changes, agent reassignment), should we force everything through API routes that use `supabaseAdmin` with explicit ownership checks, or keep direct Supabase calls with stricter RLS? Affects whether `016`'s `WITH CHECK` needs to permit a narrow ORG_ADMIN path.
+6. **API-route vs. direct mutation (Q6)** — ✅ **Answered 2026-04-22.** Decision: route privileged mutations through server-side `/api/admin/*` handlers using `service_role` (documented in `docs/audits/2026-04-21-q6-api-route-vs-direct-decision.md`). Q6 Phase 1 shipped migration 030 (BEFORE UPDATE trigger rejecting non-BYPASSRLS privileged column writes) + `/api/admin/reassign-agent` route + F-13 regression test. Phase 2 (pending, tracked): `/api/admin/set-user-role` for the role-change UI affordance.
+
+---
+
+**Phase 11 — Scale Readiness (Tier 7)** 🔴 NOT STARTED
+> Added 2026-04-22 after Q6 Phase 1 shipment. Full audit findings in the "TIER 7 — SCALE READINESS AUDIT (2026-04-22)" section above. All items gate multi-tenant public rollout; none gate current internal-only operation.
+
+**11A — Pre-#100 security blockers (must land before public launch):** ⬜ Not started
+1. ⬜ SR-1 — Migration `031_storage_photos_rls.sql` adding org-scoped `storage.objects` policies on `package-photos` bucket. Multi-tenant photo leak today via UUID enumeration. Also evaluate private-bucket + signed-URL pattern.
+2. ⬜ SR-2 — Swap in-memory rate limiter to Upstash Redis via `@upstash/ratelimit`. Add `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` to env + `.env.example`. Every `/api/admin/*` route already uses the limiter — change is a single-file swap in `src/shared/lib/rate-limit.ts`.
+3. ⬜ SR-3 — Rekey the limiter from IP-only to `user_id + route` for authenticated endpoints. IP fallback remains for `/auth/callback` and other anonymous routes.
+4. ⬜ SR-4 — Apply the (post-SR-2) Upstash limiter to `src/app/auth/callback/route.ts`. Strict: 10/min per IP, 5/min per email.
+5. ⬜ SR-5 — Cloudflare Turnstile on the login flow. Add `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, widget on `src/app/login/`, server-side token verification in `/auth/callback`.
+6. ⬜ SR-6 — Tighten `src/shared/lib/csrf.ts:52-54` to reject requests missing both Origin and Referer. Carve out for `service_role` server-to-server via signed `X-Enviato-Server-Key` header.
+
+**11B — Pre-#500 performance + compliance:** ⬜ Not started
+7. ⬜ SR-7 — Server-side `sharp` image resize pipeline. Upload writes original + `-sm` (400px) + `-md` (1024px) variants; `package_photos` row stores all three URLs.
+8. ⬜ SR-8 — Migrate `PhotoGallery.tsx:75` from `<img>` to `<Image>` from `next/image`. Add responsive `sizes` + `loading="lazy"`.
+9. ⬜ SR-9 — Drop `photos:package_photos(...)` from the list query at `src/app/(dashboard)/admin/packages/page.tsx:279-290`. Fetch photos only on detail view. Add `has_photos BOOLEAN` trigger-maintained column if list needs an indicator.
+10. ⬜ SR-10 — Recipient list pages → server components with Next.js `revalidate: 30-60`. Wrap interactive client fetches in React Query (already installed, currently only used for reference data).
+11. ⬜ SR-11 — Throttle `AuthProvider.handleVisibility` to re-fetch only if staleness > 60s. Prefer re-hydrating from JWT claims over DB hit.
+12. ⬜ SR-12 — Shared `recordActivity()` helper in `src/shared/lib/audit.ts` + call from every `/api/admin/*` route (success and rejection paths). Complements migration 030's trigger — trigger rejects, app records the attempt.
+13. ⬜ SR-13 — Verify Supavisor transaction-mode pooling (port 6543) is in use. Document canonical `DATABASE_URL` in `.env.example`. **If current config is session mode, promote this item to 11A.**
+
+**11C — Pre-#1,000 optimizations + hardening:** ⬜ Not started
+14. ⬜ SR-14 — Shorten access token TTL to 15 min in Supabase Auth settings. Rely on refresh token rotation. Resolves F-6. Land together with SR-12.
+15. ⬜ SR-15 — Complete the index coverage audit (the original audit agent couldn't mount the filesystem). Add missing composite indexes — likely candidates: `(org_id, status, checked_in_at DESC)`, `(org_id, customer_id, created_at DESC)`.
+16. ⬜ SR-16 — Cloudflare CDN in front of Supabase Storage via custom domain + cache rules. Or migrate hot photos to Cloudinary / Mux for transparent resizing + edge delivery.
+17. ⬜ SR-17 — Direct-to-bucket signed-URL uploads. New route `/api/request-upload-url` returns a short-lived signed URL; client PUTs directly to Supabase Storage; post-upload webhook triggers SR-7's resize job.
+18. ⬜ SR-18 — k6 or Artillery load test at 2× target concurrency × worst-case query shape. Record p95/p99 latency, pool exhaustion point, error budget. Gate multi-tenant rollout on green.
+
+**11D — Observability (flagged, not yet audited):** ⬜ Not started
+- ⬜ Confirm Sentry (or equivalent) error tracking is active, with proper `beforeSend` scrubbing for PII.
+- ⬜ APM / query-level telemetry decision: Datadog vs. Axiom vs. Supabase built-in logs.
+- ⬜ Alerts on 429 rate spikes, 5xx surges, connection-pool exhaustion, rejected privileged-column writes (SQLSTATE 42501).
