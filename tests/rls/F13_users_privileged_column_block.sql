@@ -62,10 +62,15 @@ BEGIN
   END IF;
 
   -- Stash target + agent in a temp table so the impersonated block below
-  -- can read them. Temp tables bypass RLS because they're session-local.
+  -- can read them. Temp tables are session-local (no RLS attached) but they
+  -- ARE owned by the creating role (postgres), so we still have to GRANT
+  -- SELECT below before SET LOCAL ROLE authenticated runs — otherwise the
+  -- impersonated session hits "permission denied for table f13_ctx".
   CREATE TEMP TABLE f13_ctx ON COMMIT DROP AS
   SELECT v_target AS target_id, v_agent AS target_agent_id;
 END $$;
+
+GRANT SELECT ON f13_ctx TO authenticated;
 
 -- ────────────────────────────────────────────────────────────────────────
 -- Case A: ORG_ADMIN tries to change another user's role_v2 directly.
