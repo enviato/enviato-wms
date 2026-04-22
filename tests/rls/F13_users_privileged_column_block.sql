@@ -131,8 +131,11 @@ BEGIN
   v_new := CASE WHEN v_old = 'WAREHOUSE_STAFF' THEN 'ORG_ADMIN' ELSE 'WAREHOUSE_STAFF' END;
 
   BEGIN
+    -- The column is users.role_v2; the enum type backing it is
+    -- public.user_role_v2 (see baseline line 58). Don't conflate the two —
+    -- '%L::role_v2' would error with "type role_v2 does not exist".
     EXECUTE format(
-      'UPDATE public.users SET role_v2 = %L::role_v2 WHERE id = %L',
+      'UPDATE public.users SET role_v2 = %L::public.user_role_v2 WHERE id = %L',
       v_new, v_target
     );
     GET DIAGNOSTICS v_rows = ROW_COUNT;
