@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 import { adminDelete } from "@/lib/admin-delete";
 import { logger } from "@/shared/lib/logger";
+import { reassignAgent } from "@/shared/lib/api";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
@@ -669,13 +670,16 @@ export default function PackagesPage() {
       else if (batchEditField === "weight") updatePayload = { weight: batchEditValue ? parseFloat(batchEditValue) : null };
 
       if (batchEditField === "agent") {
-        // Agent is on the customer (recipient), not the package — update each customer's agent_id
-        const customerIds = new Set(
+        // Agent is on the customer (recipient), not the package — update each customer's agent_id.
+        // Routed via /api/admin/reassign-agent (migration 030 blocks direct writes).
+        const customerIds = Array.from(new Set(
           packages.filter((p) => table.selectedIds.has(p.id) && p.customer_id).map((p) => p.customer_id!)
-        );
-        await Promise.all(Array.from(customerIds).map((cid) =>
-          supabase.from("users").update({ agent_id: batchEditValue || null }).eq("id", cid)
         ));
+        const { error: reassignError } = await reassignAgent("users", customerIds, batchEditValue || null);
+        if (reassignError) {
+          showSuccess(reassignError.message);
+          return;
+        }
         const agentObj = agentsList.find((a) => a.id === batchEditValue);
         setPackages((prev) => prev.map((p) => {
           if (!table.selectedIds.has(p.id) || !p.customer) return p;
@@ -983,7 +987,7 @@ export default function PackagesPage() {
                       setDropdownSearch("");
                       if (!pkg.customer_id) return;
                       (async () => {
-                        const { error } = await supabase.from("users").update({ agent_id: null }).eq("id", pkg.customer_id!);
+                        const { error } = await reassignAgent("users", [pkg.customer_id!], null);
                         if (!error) {
                           setPackages((prev) => prev.map((p) => {
                             if (p.customer_id === pkg.customer_id && p.customer) {
@@ -1009,7 +1013,7 @@ export default function PackagesPage() {
                         setDropdownSearch("");
                         if (!pkg.customer_id) return;
                         (async () => {
-                          const { error } = await supabase.from("users").update({ agent_id: a.id }).eq("id", pkg.customer_id!);
+                          const { error } = await reassignAgent("users", [pkg.customer_id!], a.id);
                           if (!error) {
                             setPackages((prev) => prev.map((p) => {
                               if (p.customer_id === pkg.customer_id && p.customer) {

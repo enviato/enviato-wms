@@ -104,3 +104,55 @@ export async function setOrgSetting(
     { onConflict: "org_id,key" }
   );
 }
+
+/**
+ * Reassign the agent_id (or billed_by_agent_id, on invoices) for one or more
+ * rows. Calls POST /api/admin/reassign-agent — required for `users.agent_id`
+ * since migration 030 (the column-pin trigger rejects direct client writes).
+ *
+ * Returns a Supabase-shaped { data, error } so callers can use the same
+ * `if (!error) { ...optimistic update... }` pattern as the supabase-js calls
+ * they're replacing.
+ *
+ * Example:
+ *   const { error } = await reassignAgent("users", [customerId], newAgentId);
+ *   if (!error) setRecipients(...);
+ */
+export async function reassignAgent(
+  subjectTable: "users" | "awbs" | "invoices",
+  subjectIds: string[],
+  newAgentId: string | null
+): Promise<{
+  data: { updated: string[]; failed: { id: string; message: string }[] } | null;
+  error: { message: string } | null;
+}> {
+  if (subjectIds.length === 0) {
+    return { data: { updated: [], failed: [] }, error: null };
+  }
+  try {
+    const res = await fetch("/api/admin/reassign-agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject_table: subjectTable,
+        subject_ids: subjectIds,
+        new_agent_id: newAgentId,
+      }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      updated?: string[];
+      failed?: { id: string; message: string }[];
+      error?: string;
+    };
+    if (!res.ok) {
+      return { data: null, error: { message: json.error || `HTTP ${res.status}` } };
+    }
+    return {
+      data: { updated: json.updated || [], failed: json.failed || [] },
+      error: null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Network error";
+    return { data: null, error: { message } };
+  }
+}

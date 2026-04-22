@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { logger } from "@/shared/lib/logger";
 import { adminDelete } from "@/lib/admin-delete";
+import { reassignAgent } from "@/shared/lib/api";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
@@ -485,7 +486,13 @@ export default function CustomersPage() {
     setBatchUpdating(true);
     try {
       const ids = Array.from(table.selectedIds);
-      await Promise.all(ids.map((id) => supabase.from("users").update({ agent_id: batchAgentValue || null }).eq("id", id)));
+      // Required path: migration 030 rejects direct PostgREST writes to
+      // users.agent_id with SQLSTATE 42501. Routed through admin API.
+      const { error } = await reassignAgent("users", ids, batchAgentValue || null);
+      if (error) {
+        table.showError(error.message);
+        return;
+      }
       const agent = agentsList.find((a) => a.id === batchAgentValue);
       setRecipients((prev) => prev.map((r) => table.selectedIds.has(r.id) ? { ...r, agent_id: batchAgentValue, agent: agent ? { id: agent.id, name: agent.name, company_name: agent.company_name, agent_code: agent.agent_code } : null } : r));
       table.clearSelection();

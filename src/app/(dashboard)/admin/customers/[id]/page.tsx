@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { logger } from "@/shared/lib/logger";
+import { reassignAgent } from "@/shared/lib/api";
 import SearchableSelect from "@/components/SearchableSelect";
 import { DetailRow, SuccessToast, Toggle } from "@/shared/components/forms";
 import {
@@ -146,28 +147,53 @@ export default function CustomerDetailsPage({
     try {
       const newAgentId = editForm.agent_id || null;
       const newTierId = editForm.pricing_tier_id || null;
-      const { error } = await supabase
+      const agentChanged = newAgentId !== (customer?.agent_id ?? null);
+
+      // 1. Routine columns — direct write (still passes RLS via users_update_v2 self/ORG_ADMIN branch).
+      const { error: routineError } = await supabase
         .from("users")
-        .update({ first_name: editForm.first_name, last_name: editForm.last_name, email: editForm.email, phone: editForm.phone || null, agent_id: newAgentId, pricing_tier_id: newTierId })
+        .update({
+          first_name: editForm.first_name,
+          last_name: editForm.last_name,
+          email: editForm.email,
+          phone: editForm.phone || null,
+          pricing_tier_id: newTierId,
+        })
         .eq("id", params.id);
 
-      if (!error) {
-        const matchedAgent = agentsList.find((a) => a.id === newAgentId);
-        setCustomer((prev) =>
-          prev ? {
-            ...prev,
-            first_name: editForm.first_name,
-            last_name: editForm.last_name,
-            email: editForm.email,
-            phone: editForm.phone || null,
-            agent_id: newAgentId,
-            pricing_tier_id: newTierId,
-            agent: matchedAgent ? { id: matchedAgent.id, name: matchedAgent.name, company_name: matchedAgent.company_name } : null,
-          } : prev
-        );
-        setEditing(false);
-        showSuccess("Recipient updated");
+      if (routineError) {
+        logger.error("Error saving customer (routine columns)", routineError);
+        return;
       }
+
+      // 2. agent_id — routed via admin API (migration 030 blocks direct writes).
+      if (agentChanged) {
+        const { error: agentError } = await reassignAgent(
+          "users",
+          [params.id],
+          newAgentId
+        );
+        if (agentError) {
+          logger.error("Error reassigning agent", agentError);
+          return;
+        }
+      }
+
+      const matchedAgent = agentsList.find((a) => a.id === newAgentId);
+      setCustomer((prev) =>
+        prev ? {
+          ...prev,
+          first_name: editForm.first_name,
+          last_name: editForm.last_name,
+          email: editForm.email,
+          phone: editForm.phone || null,
+          agent_id: newAgentId,
+          pricing_tier_id: newTierId,
+          agent: matchedAgent ? { id: matchedAgent.id, name: matchedAgent.name, company_name: matchedAgent.company_name } : null,
+        } : prev
+      );
+      setEditing(false);
+      showSuccess("Recipient updated");
     } catch (error) {
       logger.error("Error saving customer", error);
     } finally {

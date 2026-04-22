@@ -11,6 +11,7 @@ import { useCourierGroups, useAgents } from "@/shared/hooks/queries";
 import BatchBar from "@/shared/components/DataTable/BatchBar";
 import type { ColumnDef } from "@/shared/types/common";
 import { logger } from "@/shared/lib/logger";
+import { reassignAgent } from "@/shared/lib/api";
 import ColumnHeaderMenu from "@/components/ColumnHeaderMenu";
 import NotificationBell from "@/modules/notifications/components/NotificationBell";
 import {
@@ -347,7 +348,13 @@ export default function AwbsPage() {
     setBatchUpdating(true);
     try {
       const ids = Array.from(table.selectedIds);
-      await Promise.all(ids.map((id) => supabase.from("awbs").update({ agent_id: batchAgentValue }).eq("id", id)));
+      // Routed via /api/admin/reassign-agent — direct PostgREST writes to
+      // privileged FK columns are blocked by migration 030 / convention.
+      const { error } = await reassignAgent("awbs", ids, batchAgentValue || null);
+      if (error) {
+        table.showSuccess(error.message);
+        return;
+      }
       setAwbs((prev) => prev.map((a) => table.selectedIds.has(a.id) ? { ...a, agent_id: batchAgentValue } : a));
       table.clearSelection();
       setShowAgentPopover(false);

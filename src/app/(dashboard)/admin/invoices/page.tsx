@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { logger } from "@/shared/lib/logger";
 import { adminDelete } from "@/lib/admin-delete";
+import { reassignAgent } from "@/shared/lib/api";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useTableColumnSizing } from "@/hooks/useTableColumnSizing";
 import { useTableState } from "@/shared/hooks/useTableState";
@@ -267,7 +268,12 @@ export default function InvoicesPage() {
     setBatchUpdating(true);
     try {
       const ids = Array.from(table.selectedIds);
-      await Promise.all(ids.map((id) => supabase.from("invoices").update({ billed_by_agent_id: batchAgentValue }).eq("id", id)));
+      // Routed via /api/admin/reassign-agent (Q6 convention, migration 030).
+      const { error } = await reassignAgent("invoices", ids, batchAgentValue || null);
+      if (error) {
+        table.showError(error.message);
+        return;
+      }
       setInvoices((prev) => prev.map((inv) => table.selectedIds.has(inv.id) ? { ...inv, billed_by_agent_id: batchAgentValue } : inv));
       table.clearSelection();
       setShowAgentPopover(false);
