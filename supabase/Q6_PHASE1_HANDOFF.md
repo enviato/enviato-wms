@@ -168,3 +168,68 @@ Delete `supabase/Q6_PHASE1_HANDOFF.md` after review if you don't want the breadc
 Phase 1 closes the `users` table specifically because it's the highest-blast-radius surface (role escalation + tenant isolation both ride on these three columns). If a future audit decides to extend the same pattern to other tables — e.g. `awbs.org_id`, `invoices.org_id`, `agents.parent_agent_id` — the playbook is now established: column-pinned BEFORE UPDATE trigger + admin route + F-# regression. Each one should be its own migration with its own test file, not bundled.
 
 The remaining `/api/admin/set-user-role` route (referenced in 030's error message for `role_v2` / `role_id`) does not exist yet — none of today's UI mutates those columns, so there's no swap to do. Build it the day a feature actually needs it; the trigger error message will surface that requirement loudly.
+
+## Prod deploy closeout (2026-04-22)
+
+**Status: SHIPPED.** Both layers — app code and DB trigger — are live in production.
+
+### App layer (Vercel)
+
+All four Q6 Phase 1 commits + the F-13 test-fix commits deployed cleanly via Vercel's auto-deploy from `main`. Current production deployment is commit `4240683` ("fix(test/F-13): grant temp-tab...") — the latest in the deployment list. Earlier builds visible in Vercel history (Apr 12's `Command "npm run build" exited with 1` on commit `cc88660`) are stale pre-Q6 state and should be ignored.
+
+### DB layer (Supabase, `main` production branch)
+
+Applied migration 030 directly via Supabase SQL editor rather than the CLI (project is on Free plan — branching deferred, see below). Pure DDL, no data touched:
+
+1. **Migration body ran clean.** `CREATE OR REPLACE FUNCTION users_block_privileged_column_changes()` + `CREATE TRIGGER trg_users_block_privileged_column_changes BEFORE UPDATE OF role_v2, agent_id, role_id ON public.users`. Supabase's SQL-editor "destructive operations" warning fired on the idempotent `DROP TRIGGER IF EXISTS` — expected false positive on a fresh apply.
+2. **Trigger installed** (confirmed via `pg_trigger` / `pg_class` join). Exactly one row returned, definition matches the migration verbatim.
+3. **Smoke test PASSED** (rolled back, no data changed). Under a full ORG_ADMIN JWT — matching a real browser session's shape — attempted:
+
+   ```sql
+   UPDATE public.users SET agent_id = <new-uuid> WHERE id = <in-org-target>;
+   ```
+
+   Result:
+
+   ```
+   ERROR:  42501: column "agent_id" cannot be changed via direct client update;
+           use POST /api/admin/reassign-agent
+   CONTEXT: PL/pgSQL function users_block_privileged_column_changes() line 21 at RAISE
+   ```
+
+   Exact error string from the migration source, fired from the correct function. BYPASSRLS carve-out verified implicitly — if the session's `authenticated` role had accidentally been flagged `rolbypassrls = true`, the trigger would have returned NEW silently and the UPDATE would have succeeded.
+
+### Smoke-test caveats surfaced during deploy
+
+Two false-negative test setups bit us before the test that actually exercised the trigger:
+
+1. **Minimal-JWT + RLS-filtered subquery.** `SELECT id FROM public.users LIMIT 1` inside an impersonated `authenticated` block returns 0 rows when the JWT lacks `org_id` / `role_v2` claims. 0-row UPDATE → BEFORE ROW trigger never fires → test "passes" without exercising the code path. Same bug class as the F-12 / F-13 vacuous-pass issues — worth remembering the next time we write a prod smoke test against an RLS'd table.
+2. **Temp-table staging isn't enough if the UPDATE itself is RLS-filtered.** Even with a real `target_id` staged in a temp table, the UPDATE statement's implicit USING clause still runs under RLS. Fix: use a JWT with claims that pass the RLS policy on the target table. See the final smoke-test SQL in this session's transcript.
+
+If we ever script a `/scripts/prod-smoke-030.sql` checklist, the working version (not the two failed attempts) is the one to capture.
+
+### CI path to green (historical, for the postmortem)
+
+F-13 itself took four CI iterations to land — worth noting the pattern in case the next ship hits the same anti-pattern:
+
+| Run | Failure | Root cause | Fix commit |
+|---|---|---|---|
+| 1 | `permission denied for table f13_ctx` | TEMP TABLE owned by postgres, no grant to `authenticated` | `f6554f3` add GRANT SELECT to authenticated |
+| 2 | Case A INSERT "succeeded" (vacuous pass) | Hardcoded NEW value matched OLD value in seed → `IS DISTINCT FROM` correctly skipped → assert flipped | `520520c` pick guaranteed-different NEW values |
+| 3 | `type "role_v2" does not exist` | Column name ≠ enum type name (`users.role_v2` column, `public.user_role_v2` enum) | `a2cdaa9` cast to `public.user_role_v2` |
+| 4 | `permission denied for table f13_ctx` at Case E | Same bug class as run #1, but for `service_role` instead of `authenticated` | `4240683` add `service_role` to the GRANT |
+
+Meta-lesson: runs 1 and 4 were the same bug — missing GRANT — caught one role at a time. A complete mental walkthrough of every role transition after run #1 would have surfaced run #4's fix in the same commit. Adding a mandatory "trace every `SET LOCAL ROLE` in the test against the temp-table grants" checklist step next time.
+
+### Threads left hanging (intentionally)
+
+1. **Supabase staging branch / `STAGING_DATABASE_URL`.** Free plan blocks native branching; user chose to defer rather than upgrade to Pro or stand up a second free project. Decision point deferred to the next migration that carries non-trivial risk — 030 was pure DDL with reversible rollback, so applying direct to prod was acceptable. **Before the next multi-migration change, stand up staging.**
+2. **`/api/admin/set-user-role` route.** Still doesn't exist; still not blocking anything. The trigger's error message will surface the need the moment any UI tries to mutate `role_v2` / `role_id` from the browser.
+3. **Rollback procedure, recorded for posterity.** If 030 needs to be undone — e.g. a future change reshapes how ORG_ADMINs set roles and the trigger gets in the way — the rollback is two DROP statements:
+
+   ```sql
+   DROP TRIGGER IF EXISTS trg_users_block_privileged_column_changes ON public.users;
+   DROP FUNCTION IF EXISTS public.users_block_privileged_column_changes();
+   ```
+
+   Reversible, no data touched, takes ~10ms. Don't roll back without also reverting the app code changes — the `/api/admin/reassign-agent` route will keep working (service_role bypasses the trigger either way), but the convention layer's "defense in depth" promise goes away the moment the trigger is dropped.
