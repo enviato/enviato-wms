@@ -3,6 +3,11 @@
 **Created:** April 12, 2026
 **Stack:** Next.js 14 + Supabase + Vercel + Cloudflare DNS
 
+> **Looking for the staging workflow?** This document covers initial go-live setup
+> (creating the GitHub repo, configuring Vercel, etc.). For the day-to-day
+> workflow of testing changes on staging before promoting to production, see
+> [STAGING.md](./STAGING.md).
+
 ---
 
 ## OVERVIEW
