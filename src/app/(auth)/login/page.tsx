@@ -10,7 +10,7 @@ import { Mail, ArrowRight, Loader2, KeyRound, ArrowLeft } from "lucide-react";
  * Two-step flow:
  *   1. User enters email
  *   2. supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
- *      asks Supabase to email a 6-digit code (the email template must render
+ *      asks Supabase to email a code (the email template must render
  *      `{{ .Token }}` for this to work — the link is unused in this flow)
  *   3. User enters the 6-digit code
  *   4. supabase.auth.verifyOtp({ email, token, type: "email" }) validates it
@@ -167,8 +167,7 @@ export default function LoginPage() {
                 Sign in to your account
               </h2>
               <p className="text-txt-secondary text-ui-sm mb-6">
-                Enter your email and we&apos;ll send you a 6-digit sign-in
-                code.
+                Enter your email and we&apos;ll send you a sign-in code.
               </p>
 
               <form onSubmit={handleEmailSubmit} className="space-y-4">
@@ -222,7 +221,7 @@ export default function LoginPage() {
                 Enter your sign-in code
               </h2>
               <p className="text-txt-secondary text-ui-sm mb-6">
-                We sent a 6-digit code to{" "}
+                We sent a sign-in code to{" "}
                 <strong className="text-txt-primary">{email}</strong>. Check
                 your inbox (and spam folder).
               </p>
@@ -241,13 +240,13 @@ export default function LoginPage() {
                       id="code"
                       type="text"
                       inputMode="numeric"
-                      pattern="[0-9]{6}"
-                      maxLength={6}
+                      pattern="[0-9]{6,10}"
+                      maxLength={10}
                       value={code}
                       onChange={(e) =>
                         setCode(e.target.value.replace(/[^0-9]/g, ""))
                       }
-                      placeholder="123456"
+                      placeholder="Enter the code from your email"
                       required
                       autoFocus
                       autoComplete="one-time-code"
@@ -262,7 +261,7 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  disabled={loading || code.length !== 6}
+                  disabled={loading || code.length < 6}
                   className="w-full bg-brand-dark hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-md flex items-center justify-center gap-2 transition-colors duration-200 cursor-pointer text-ui shadow-sm"
                 >
                   {loading ? (
