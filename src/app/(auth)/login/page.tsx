@@ -2,31 +2,45 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase";
-import { Mail, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
+import { Mail, ArrowRight, Loader2, KeyRound, ArrowLeft } from "lucide-react";
 
 /**
- * Passwordless email magic-link login.
+ * Passwordless email OTP-code login.
  *
- * Flow:
+ * Two-step flow:
  *   1. User enters email
- *   2. supabase.auth.signInWithOtp() asks Supabase to send a one-time link
- *   3. Supabase emails a link like https://<this-host>/auth/callback?code=<verifier>
- *   4. User clicks the link in their inbox
- *   5. /auth/callback exchanges the code for a session (see route.ts)
+ *   2. supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+ *      asks Supabase to email a 6-digit code (the email template must render
+ *      `{{ .Token }}` for this to work — the link is unused in this flow)
+ *   3. User enters the 6-digit code
+ *   4. supabase.auth.verifyOtp({ email, token, type: "email" }) validates it
+ *   5. On success, the SDK stores the session in browser cookies and we
+ *      redirect to /admin
  *
- * `shouldCreateUser: false` is critical — without it, anyone could request a
- * link for any email and Supabase would create a new auth account on the fly.
- * We require the user to already exist (created via the invite-user flow).
+ * Why OTP code instead of magic link:
+ *   - Magic links use PKCE, which requires the same browser session that
+ *     started the request to also click the link. Real users open emails on
+ *     phones, work browsers, mail security gateways, etc., causing
+ *     "otp_expired" failures whenever the click happens in a different
+ *     browser context. OTP codes are immune: the user types the code into
+ *     the same browser they started in, so cookies stay aligned.
+ *
+ * `shouldCreateUser: false` is critical — without it, anyone could request
+ * a code for any email and Supabase would create a new auth account on the
+ * fly. We require the user to already exist (created via invite-user).
  */
+type Step = "email" | "code";
+
 export default function LoginPage() {
+  const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
-  const [step, setStep] = useState<"email" | "sent">("email");
+  const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const supabase = createClient();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
@@ -35,7 +49,6 @@ export default function LoginPage() {
       const { error: otpError } = await supabase.auth.signInWithOtp({
         email: email.toLowerCase().trim(),
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
           shouldCreateUser: false,
         },
       });
@@ -51,20 +64,22 @@ export default function LoginPage() {
           setError(
             "No account found with that email. Contact your administrator if you should have access."
           );
-        } else if (message.includes("rate") || message.includes("limit")) {
-          setError(
-            "Too many attempts. Please wait a few minutes and try again."
-          );
+        } else if (
+          message.includes("rate") ||
+          message.includes("limit") ||
+          message.includes("security purposes")
+        ) {
+          setError("Too many attempts. Please wait a minute and try again.");
         } else {
           setError(
-            otpError.message || "Failed to send sign-in link. Please try again."
+            otpError.message || "Failed to send code. Please try again."
           );
         }
         setLoading(false);
         return;
       }
 
-      setStep("sent");
+      setStep("code");
       setLoading(false);
     } catch {
       setError("Network error. Please try again.");
@@ -72,9 +87,49 @@ export default function LoginPage() {
     }
   };
 
-  const handleTryAgain = () => {
+  const handleCodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.toLowerCase().trim(),
+        token: code.trim(),
+        type: "email",
+      });
+
+      if (verifyError) {
+        const message = verifyError.message?.toLowerCase() ?? "";
+        if (message.includes("expired")) {
+          setError(
+            "That code expired. Click 'Use a different email' to request a new one."
+          );
+        } else if (
+          message.includes("invalid") ||
+          message.includes("incorrect")
+        ) {
+          setError("Invalid code. Check the email and try again.");
+        } else {
+          setError(
+            verifyError.message || "Failed to verify code. Please try again."
+          );
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Success — session is stored. Hard redirect so server gets the cookie.
+      window.location.href = "/admin";
+    } catch {
+      setError("Network error. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  const handleBack = () => {
     setStep("email");
-    setEmail("");
+    setCode("");
     setError("");
   };
 
@@ -112,10 +167,11 @@ export default function LoginPage() {
                 Sign in to your account
               </h2>
               <p className="text-txt-secondary text-ui-sm mb-6">
-                Enter your email and we&apos;ll send you a secure sign-in link.
+                Enter your email and we&apos;ll send you a 6-digit sign-in
+                code.
               </p>
 
-              <form onSubmit={handleLogin} className="space-y-4">
+              <form onSubmit={handleEmailSubmit} className="space-y-4">
                 <div>
                   <label
                     htmlFor="email"
@@ -151,7 +207,7 @@ export default function LoginPage() {
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <>
-                      Send sign-in link
+                      Send sign-in code
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
@@ -160,28 +216,75 @@ export default function LoginPage() {
             </>
           )}
 
-          {step === "sent" && (
-            <div className="text-center py-2">
-              <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+          {step === "code" && (
+            <>
               <h2 className="text-ui font-semibold text-txt-primary mb-1">
-                Check your email
+                Enter your sign-in code
               </h2>
-              <p className="text-txt-secondary text-ui-sm mb-4">
-                We sent a sign-in link to{" "}
-                <strong className="text-txt-primary">{email}</strong>. Click
-                the link to access your dashboard.
+              <p className="text-txt-secondary text-ui-sm mb-6">
+                We sent a 6-digit code to{" "}
+                <strong className="text-txt-primary">{email}</strong>. Check
+                your inbox (and spam folder).
               </p>
-              <p className="text-txt-tertiary text-meta mb-5">
-                The link expires in 1 hour. Check your spam folder if you
-                don&apos;t see it.
-              </p>
-              <button
-                onClick={handleTryAgain}
-                className="text-brand-dark text-ui-sm hover:underline cursor-pointer"
-              >
-                Use a different email
-              </button>
-            </div>
+
+              <form onSubmit={handleCodeSubmit} className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="code"
+                    className="block text-ui-sm text-txt-primary mb-2"
+                  >
+                    Sign-in code
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-txt-tertiary" />
+                    <input
+                      id="code"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]{6}"
+                      maxLength={6}
+                      value={code}
+                      onChange={(e) =>
+                        setCode(e.target.value.replace(/[^0-9]/g, ""))
+                      }
+                      placeholder="123456"
+                      required
+                      autoFocus
+                      autoComplete="one-time-code"
+                      className="w-full bg-surface-secondary border border-border rounded-md pl-10 pr-4 py-2 text-txt-primary text-ui tracking-widest placeholder:text-txt-secondary focus:outline-none focus:bg-white focus:border-border transition-all duration-200"
+                    />
+                  </div>
+                </div>
+
+                {error && (
+                  <p className="text-brand-red text-ui-sm">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading || code.length !== 6}
+                  className="w-full bg-brand-dark hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-md flex items-center justify-center gap-2 transition-colors duration-200 cursor-pointer text-ui shadow-sm"
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      Verify and sign in
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="w-full flex items-center justify-center gap-1 text-brand-dark text-ui-sm hover:underline cursor-pointer"
+                >
+                  <ArrowLeft className="w-3 h-3" />
+                  Use a different email
+                </button>
+              </form>
+            </>
           )}
         </div>
 
