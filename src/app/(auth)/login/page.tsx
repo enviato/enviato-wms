@@ -250,7 +250,7 @@ export default function LoginPage() {
                       required
                       autoFocus
                       autoComplete="one-time-code"
-                      className="w-full bg-surface-secondary border border-border rounded-md pl-10 pr-4 py-2 text-txt-primary text-ui tracking-widest placeholder:text-txt-secondary focus:outline-none focus:bg-white focus:border-border transition-all duration-200"
+                      className="w-full bg-surface-secondary border border-border rounded-md pl-10 pr-4 py-2 text-txt-primary text-ui tracking-wider placeholder:text-txt-secondary placeholder:tracking-normal focus:outline-none focus:bg-white focus:border-border transition-all duration-200"
                     />
                   </div>
                 </div>
